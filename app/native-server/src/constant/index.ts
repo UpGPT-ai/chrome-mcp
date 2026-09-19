@@ -50,7 +50,19 @@ export const ERROR_MESSAGES = {
   MCP_SESSION_DELETION_ERROR: 'Internal server error during MCP session deletion.',
   MCP_REQUEST_PROCESSING_ERROR: 'Internal server error during MCP request processing.',
   INVALID_SSE_SESSION: 'Invalid or missing MCP session ID for SSE.',
+  /**
+   * Returned (as HTTP 404) when a request carries an `mcp-session-id` this
+   * process does not know. The bridge is respawned by Chrome on every native-port
+   * reconnect and keeps sessions only in memory, so this is routine after a
+   * restart. Per the MCP Streamable HTTP spec a 404 tells a long-lived client
+   * (e.g. Claude Code) to drop its session and re-initialize; anything else is
+   * treated as a hard error and every subsequent call fails identically.
+   */
+  SESSION_NOT_FOUND: 'Session not found',
 } as const;
+
+/** JSON-RPC error code the MCP SDK uses for an unknown session. */
+export const JSONRPC_SESSION_NOT_FOUND_CODE = -32001;
 
 // ============================================================
 // Chrome MCP Server Configuration

@@ -16,13 +16,14 @@ import {
   SERVER_CONFIG,
   HTTP_STATUS,
   ERROR_MESSAGES,
+  JSONRPC_SESSION_NOT_FOUND_CODE,
 } from '../constant';
 import { NativeMessagingHost } from '../native-messaging-host';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { randomUUID } from 'node:crypto';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { getMcpServer } from '../mcp/mcp-server';
+import { createMcpServer } from '../mcp/mcp-server';
 import { AgentStreamManager } from '../agent/stream-manager';
 import { AgentChatService } from '../agent/chat-service';
 import { CodexEngine } from '../agent/engines/codex';
@@ -164,6 +165,27 @@ export class Server {
   // MCP Routes
   // ============================================================
 
+  /**
+   * Reply to a request whose `mcp-session-id` is unknown to this process.
+   *
+   * MUST be HTTP 404 (MCP Streamable HTTP spec; same status/body the SDK's own
+   * validateSession emits). The bridge is a Chrome native-messaging child that is
+   * respawned with an empty transportsMap on every native-port reconnect, so a
+   * client that outlives a bridge (Claude Code keeps its HTTP transport up for
+   * days) will routinely present a session id we have never seen. A 404 makes the
+   * client discard the session and re-initialize; the 400 previously returned
+   * here was treated as a hard error and produced the recurring
+   * `Error POSTing to endpoint: {"error":"Invalid MCP request or session."}`
+   * until Claude Code itself was restarted.
+   */
+  private replySessionNotFound(reply: FastifyReply): void {
+    reply.code(HTTP_STATUS.NOT_FOUND).send({
+      jsonrpc: '2.0',
+      error: { code: JSONRPC_SESSION_NOT_FOUND_CODE, message: ERROR_MESSAGES.SESSION_NOT_FOUND },
+      id: null,
+    });
+  }
+
   private setupMcpRoutes(): void {
     // SSE endpoint
     this.fastify.get('/sse', async (_, reply) => {
@@ -177,11 +199,15 @@ export class Server {
         const transport = new SSEServerTransport('/messages', reply.raw);
         this.transportsMap.set(transport.sessionId, transport);
 
+        // Each session gets its OWN McpServer (see createMcpServer) — a single SDK
+        // Server can back only one transport. Close it when the SSE stream closes
+        // so a dropped client never leaves a server/transport bound (the slot-poison bug).
+        const server = createMcpServer();
         reply.raw.on('close', () => {
           this.transportsMap.delete(transport.sessionId);
+          void server.close();
         });
 
-        const server = getMcpServer();
         await server.connect(transport);
 
         reply.raw.write(':\n\n');
@@ -230,13 +256,28 @@ export class Server {
           },
         });
 
+        // Per-session McpServer (a single SDK Server backs only one transport), so
+        // a dropped session can never poison a shared server with "Already
+        // connected to a transport". server.connect() wraps this onclose and runs
+        // Protocol._onclose() right after it, which is what tears the server side
+        // down — so only the map entry needs releasing here. Do NOT call
+        // server.close() from this hook: server.close() -> transport.close() ->
+        // onclose -> server.close() ... recurses synchronously until
+        // "RangeError: Maximum call stack size exceeded" (hit on every DELETE /mcp).
+        const server = createMcpServer();
         transport.onclose = () => {
-          if (transport?.sessionId && this.transportsMap.get(transport.sessionId)) {
-            this.transportsMap.delete(transport.sessionId);
+          const closedSessionId = transport?.sessionId;
+          if (closedSessionId) {
+            this.transportsMap.delete(closedSessionId);
           }
         };
-        await getMcpServer().connect(transport);
+        await server.connect(transport);
+      } else if (sessionId) {
+        // Stale/unknown session (typically: bridge restarted under a long-lived client).
+        this.replySessionNotFound(reply);
+        return;
       } else {
+        // No session and not an initialize request.
         reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_MCP_REQUEST });
         return;
       }
@@ -259,23 +300,31 @@ export class Server {
         ? (this.transportsMap.get(sessionId) as StreamableHTTPServerTransport)
         : undefined;
 
-      if (!transport) {
+      if (!sessionId) {
         reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_SSE_SESSION });
         return;
       }
+      if (!transport) {
+        this.replySessionNotFound(reply);
+        return;
+      }
 
-      reply.raw.setHeader('Content-Type', 'text/event-stream');
-      reply.raw.setHeader('Cache-Control', 'no-cache');
-      reply.raw.setHeader('Connection', 'keep-alive');
-      reply.raw.flushHeaders();
-
+      // Hand the raw socket to the SDK. The transport writes the full SSE response
+      // itself (status, Content-Type: text/event-stream, keep-alive) via
+      // @hono/node-server, which calls res.writeHead(). Pre-flushing headers here
+      // — as this handler used to — made that writeHead throw
+      // ERR_HTTP_HEADERS_SENT on every GET, so the SSE stream never opened, the
+      // client reconnect-looped, and the bridge's stderr log grew by gigabytes.
+      reply.hijack();
       try {
         await transport.handleRequest(request.raw, reply.raw);
-        if (!reply.sent) {
-          reply.hijack();
-        }
       } catch (error) {
-        if (!reply.raw.writableEnded) {
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            'Content-Type': 'application/json',
+          });
+          reply.raw.end(JSON.stringify({ error: ERROR_MESSAGES.MCP_REQUEST_PROCESSING_ERROR }));
+        } else if (!reply.raw.writableEnded) {
           reply.raw.end();
         }
       }
@@ -292,8 +341,12 @@ export class Server {
         ? (this.transportsMap.get(sessionId) as StreamableHTTPServerTransport)
         : undefined;
 
-      if (!transport) {
+      if (!sessionId) {
         reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_SESSION_ID });
+        return;
+      }
+      if (!transport) {
+        this.replySessionNotFound(reply);
         return;
       }
 
