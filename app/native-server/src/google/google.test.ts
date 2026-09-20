@@ -9,6 +9,7 @@ import {
   parseServiceAccountKey,
   saveServiceAccountKey,
   loadPolicy,
+  DEFAULT_POLICY,
 } from './store';
 import { buildJwt, clearTokenCache, getAccessToken, scopesFor, authStatus } from './auth';
 import {
@@ -294,6 +295,7 @@ describe('request building + policy', () => {
   });
   test('policy verdicts', () => {
     const base = {
+      ...DEFAULT_POLICY,
       readOnly: false,
       allowDestructive: false,
       allowedResourceIds: [] as string[],
@@ -329,6 +331,7 @@ describe('request building + policy', () => {
 
 describe('body + non-path resource gates', () => {
   const base = {
+    ...DEFAULT_POLICY,
     readOnly: false,
     allowDestructive: false,
     allowedResourceIds: [] as string[],
@@ -583,11 +586,19 @@ describe('google_api_call', () => {
 });
 
 describe('MCP surface', () => {
-  test('registers three tools and dispatches', async () => {
+  test('registers the Google tools and dispatches', async () => {
     expect(googleToolSchemas.map((t) => t.name)).toEqual([
       'google_api_call',
       'google_api_schema',
       'google_auth_status',
+      'google_auth_login',
+      'google_auth_logout',
+      'google_sheets_read',
+      'google_sheets_append',
+      'google_sheets_update',
+      'google_sheets_ensure_tab',
+      'google_docs_read',
+      'google_docs_append_text',
     ]);
     expect(isGoogleTool('google_api_call')).toBe(true);
     expect(isGoogleTool('chrome_navigate')).toBe(false);
