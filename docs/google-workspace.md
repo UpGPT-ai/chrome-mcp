@@ -68,7 +68,8 @@ sharing scope narrow.
   "allowUnscoped": false,
   "allowedServices": ["sheets", "drive"],
   "authMode": "service-account",
-  "allowFormulas": false
+  "allowFormulas": false,
+  "allowAuthTools": true
 }
 ```
 
@@ -84,6 +85,8 @@ sharing scope narrow.
   sources. There is **no automatic fallback**: in `oauth` mode a stored service-account key is never used,
   and in `service-account` mode a stored OAuth login is never used. Any other value makes the policy invalid.
 - `allowFormulas` (default `false`) is the policy half of the formula opt-in described above.
+- `allowAuthTools` (default `true`) lets the model call `google_auth_login` / `google_auth_logout`; `false` makes both
+  refuse (the CLI still works).
 - `dryRun` is advisory: it is a request from the caller, not a security boundary. The policy file is the boundary,
   and it is editable by any same-user process, including agent-engine tools.
 
@@ -114,8 +117,13 @@ Token storage: the **refresh token** lives in the macOS Keychain (service `chrom
 `oauth-refresh`) with a 0600 file fallback at `~/.chrome-mcp-agent/google-oauth.json`. **Access tokens are
 cached in memory only.** Each API call refreshes with a `scope` parameter narrowed to what that call needs, and a
 login that lacks a scope is refused instead of silently widened. A stored login from a different OAuth client is
-refused. Tool output, status output and errors never contain the refresh token, access token, code, state or
-verifier; Google errors are reduced to their `error` and `error_description` fields.
+refused. Tool output, status output and errors never contain the refresh token, access token, code or PKCE verifier.
+The `authUrl` returned by `google_auth_login` (and printed by the CLI) does contain `state` and the
+`code_challenge`; that is what the user opens in a browser, so treat the URL as low-sensitivity but not public:
+anyone who holds it can end that login early with `GET /callback?state=<state>&error=x` on the loopback port (a
+denial of service only; without the browser's code and the verifier no token can be obtained). Cached access tokens
+are keyed to the current OAuth client id and secret and are dropped on logout or when the client file changes.
+`google_auth_status` reports `oauth.clientFileInvalid` when `google-oauth-client.json` is malformed. Google errors are reduced to their `error` and `error_description` fields.
 
 `google_auth_logout` revokes the refresh token at `oauth2.googleapis.com/revoke` and deletes it locally even if the
 revoke request fails (the result says which). To remove access completely also remove the app at
@@ -143,7 +151,8 @@ chrome-mcp-google login --services sheets,docs --open
 chrome-mcp-google logout
 ```
 
-Writes are dry-runs unless `--execute` is given. Formula flags are explicit (`--user-entered`,
+Options accept `--flag value` or `--flag=value`. Unknown options, values on switches (`--execute=yes`) and
+non-decimal numbers (`--max-bytes 0x10`, `1e3`) are usage errors (exit 2). Writes are dry-runs unless `--execute` is given. Formula flags are explicit (`--user-entered`,
 `--allow-formulas`) and still need the policy's `allowFormulas`. Output is the tool JSON on stdout; the login URL
 and diagnostics go to stderr. Exit codes: 0 ok, 1 tool error or blocked, 2 usage error.
 
@@ -161,12 +170,27 @@ file that fails structural validation is discarded and refetched.
   `findReplace`, `values.update`, Docs `replaceAllText`, and `drive.files.watch`. Use `readOnly` or a resource
   allowlist when overwrites matter.
 - **Formula channels.** A cell value such as `=IMPORTRANGE(...)` or `=IMAGE(...)` can move data to another
-  spreadsheet or a remote URL. The gate does not inspect cell contents on `google_api_call`, so a raw
-  `values.update` with `USER_ENTERED` bypasses the helper defences. The helpers inspect cells; use them, and use
-  `readOnly` or `allowedResourceIds` when this matters.
-- **Helper formula scan is a heuristic.** It blocks cells that begin with `= + - @` and any `IMPORT*`, `IMAGE`,
-  `HYPERLINK` call it can see. It does not evaluate formulas, and a parsed (`userEntered`) numeric-looking or
-  date-looking string is still interpreted by Sheets.
+  spreadsheet or a remote URL. On `google_api_call` (Sheets writes) the gate now refuses, unless
+  `policy.allowFormulas` is true: `valueInputOption=USER_ENTERED` (query or body) with formula-like cells, any
+  `formulaValue` (`updateCells`, `repeatCell`, ... camelCase or snake_case), and formula-like `pasteData` /
+  `findReplace` text. Plain `USER_ENTERED` values with no formula-like string are still allowed. Even with
+  `allowFormulas` true, cells calling a blocked function are refused. `google_sheets_*` helpers apply the same scan.
+- **Helper formula scan is a heuristic.** A string is formula-like when, after stripping whitespace, control,
+  format and separator characters (U+200B, U+2060, U+0085, BOM, ...) and leading quotes, it starts with `= + - @`.
+  Blocked functions: `IMPORT*`, `IMAGE`, `HYPERLINK`, `AI`, `GOOGLEFINANCE`, `WEBSERVICE`, `CUBE*` and `QUERY` with
+  an `http(s):` / `//` URL, matched case-insensitively, tolerating whitespace before `(` and a sheet prefix.
+  It does not evaluate formulas. **Residual limit:** a spreadsheet's own Apps Script custom function
+  (`=MYFUNC(...)`) or a named function that wraps a blocked one cannot be recognised, and a parsed (`userEntered`)
+  numeric-looking or date-looking string is still interpreted by Sheets. Keep `allowFormulas` off, or use
+  `readOnly` / `allowedResourceIds`, when this matters.
+- **`insertDataOption: OVERWRITE`** on `google_sheets_append` replaces existing cells and needs `overwrite:true`
+  to execute (dry-run is unaffected).
+- **`google_sheets_ensure_tab` dry-run makes no spreadsheet call**, so it cannot say whether the tab exists
+  (`existenceChecked:false`). It may still fetch the public Discovery document.
+- **Model-callable auth tools.** `google_auth_login` and `google_auth_logout` are callable by the model with no
+  confirmation. Login still needs a human to approve consent in a browser, but a model can start (and thereby
+  cancel a pending) login or end the operator's session. Set `policy.allowAuthTools:false` to make both refuse;
+  the `chrome-mcp-google login|logout` CLI is unaffected.
 - **OAuth is broader than a service account.** The login acts as you, so it can reach everything your account can
   reach within the granted scopes, not only what was shared with a bot. Narrow it with `allowedResourceIds`,
   `allowedServices` and `readOnly`. Those are enforced by this code, not by Google.
