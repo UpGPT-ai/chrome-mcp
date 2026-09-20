@@ -48,6 +48,35 @@ describe('parseArgs', () => {
       flags: { params: '{"a":1}', execute: true },
     });
   });
+  test('supports --flag=value and keeps values that contain "="', () => {
+    expect(
+      parseArgs(['call', '--params={"a":"b=c"}', '--max-bytes=2048', '--execute=true']).flags,
+    ).toEqual({
+      params: '{"a":"b=c"}',
+      'max-bytes': '2048',
+      execute: true,
+    });
+    expect(parseArgs(['x', '--execute=false']).flags).toEqual({});
+  });
+  test('unknown flags are errors and never swallow the next token', () => {
+    expect(() => parseArgs(['call', '--bogus', 'x'])).toThrow(/unknown option --bogus/);
+    expect(() => parseArgs(['--bogus=1'])).toThrow(/unknown option/);
+    expect(() => parseArgs(['--execte'])).toThrow(/unknown option/);
+  });
+  test('boolean flags reject non-boolean values', () => {
+    expect(() => parseArgs(['--execute=yes'])).toThrow(/takes no value/);
+    expect(() => parseArgs(['--open=1'])).toThrow(/takes no value/);
+  });
+  test('a value flag followed by another flag is a missing value, not a swallowed flag', () => {
+    expect(() => parseArgs(['--params', '--execute'])).toThrow(/needs a value/);
+    expect(parseArgs(['--query=--x']).flags).toEqual({ query: '--x' });
+  });
+  test('numeric flags are strict decimal integers', async () => {
+    for (const bad of ['0x10', '1e3', ' 5', '', '-1', '1.5', 'NaN', 'Infinity', '9'.repeat(20)])
+      expect(await runCli(['call', 'sheets', 'x', `--max-bytes=${bad}`], io)).toBe(2);
+    expect(await runCli(['docs-read', 'd', '--max-chars', '0x10'], io)).toBe(2);
+    expect(await runCli(['login', '--services', 'sheets', '--wait', '1e3'], io)).toBe(2);
+  });
   test('rejects a valueless flag', async () => {
     expect(() => parseArgs(['--params'])).toThrow(/needs a value/);
     expect(() => parseArgs(['--'])).toThrow();
@@ -174,9 +203,15 @@ describe('runCli maps commands to tools', () => {
     await runCli(['docs-read', 'D', '--max-chars', '500'], io);
     expect(lastCall()).toEqual(['google_docs_read', { documentId: 'D', maxChars: 500 }]);
   });
-  test('logout goes through the tool', async () => {
-    await runCli(['logout'], io);
-    expect(lastCall()[0]).toBe('google_auth_logout');
+  test('logout is the operator path: it does not depend on policy.allowAuthTools', async () => {
+    fs.mkdirSync(process.env[AUTH_DIR_ENV]!, { recursive: true });
+    fs.writeFileSync(
+      path.join(process.env[AUTH_DIR_ENV]!, 'google-policy.json'),
+      '{"allowAuthTools":false}',
+    );
+    expect(await runCli(['logout'], io)).toBe(0);
+    expect(JSON.parse(out.join('\n'))).toMatchObject({ ok: true, hadCredential: false });
+    expect(mockHandle).not.toHaveBeenCalled();
   });
 });
 

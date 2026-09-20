@@ -10,7 +10,7 @@
  */
 import fs from 'node:fs';
 import { handleGoogleTool } from '../google';
-import { loginStatus, startLogin, waitForLogin } from '../google/oauth';
+import { loginStatus, logout, startLogin, waitForLogin } from '../google/oauth';
 
 export const USAGE = `usage: chrome-mcp-google <command> [options]
 
@@ -44,21 +44,52 @@ interface Parsed {
   flags: Record<string, string | true>;
 }
 
+/** Flags that take a value. Anything not listed here or in BOOLEAN_FLAGS is a usage error. */
+const VALUE_FLAGS = new Set([
+  'version',
+  'query',
+  'params',
+  'body',
+  'max-bytes',
+  'dimension',
+  'render',
+  'values',
+  'values-file',
+  'text',
+  'text-file',
+  'max-chars',
+  'services',
+  'wait',
+]);
+
 export function parseArgs(argv: string[]): Parsed {
   const positional: string[] = [];
   const flags: Record<string, string | true> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith('--')) {
-      const name = a.slice(2);
-      if (!name) throw new UsageError('unexpected "--"');
-      if (BOOLEAN_FLAGS.has(name)) flags[name] = true;
-      else {
-        const v = argv[++i];
-        if (v === undefined) throw new UsageError(`--${name} needs a value`);
-        flags[name] = v;
+    if (!a.startsWith('--')) {
+      positional.push(a);
+      continue;
+    }
+    const eq = a.indexOf('=');
+    const name = eq === -1 ? a.slice(2) : a.slice(2, eq);
+    const inline = eq === -1 ? undefined : a.slice(eq + 1);
+    if (!name) throw new UsageError('unexpected "--"');
+    if (BOOLEAN_FLAGS.has(name)) {
+      if (inline !== undefined && inline !== 'true' && inline !== 'false')
+        throw new UsageError(`--${name} is a switch; it takes no value (got "${inline}")`);
+      if (inline === 'false') delete flags[name];
+      else flags[name] = true;
+    } else if (VALUE_FLAGS.has(name)) {
+      let v = inline;
+      if (v === undefined) {
+        v = argv[i + 1];
+        // A following "--flag" is a missing value, not the value; use --flag=--x to pass one.
+        if (v === undefined || v.startsWith('--')) throw new UsageError(`--${name} needs a value`);
+        i++;
       }
-    } else positional.push(a);
+      flags[name] = v;
+    } else throw new UsageError(`unknown option --${name}`);
   }
   return { positional, flags };
 }
@@ -68,9 +99,9 @@ const str = (f: Record<string, string | true>, k: string): string | undefined =>
 
 function num(v: string | undefined, name: string): number | undefined {
   if (v === undefined) return undefined;
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) throw new UsageError(`--${name} must be a non-negative number`);
-  return n;
+  // Strict decimal integer: Number() would also accept "0x10", "1e3", " 5 " and "".
+  if (!/^\d{1,15}$/.test(v)) throw new UsageError(`--${name} must be a non-negative whole number`);
+  return Number(v);
 }
 
 function json(text: string, what: string): unknown {
@@ -222,8 +253,12 @@ export async function runCli(argv: string[], io: Io = defaultIo): Promise<number
         );
         return status.state === 'complete' ? 0 : 1;
       }
-      case 'logout':
-        return await runTool('google_auth_logout', {}, io);
+      case 'logout': {
+        // Operator path: not subject to policy.allowAuthTools (that flag only gates the model).
+        const out = await logout();
+        io.out(JSON.stringify({ ok: out.deleted, ...out }, null, 2));
+        return out.deleted ? 0 : 1;
+      }
       default:
         throw new UsageError(`unknown command "${cmd}"`);
     }
