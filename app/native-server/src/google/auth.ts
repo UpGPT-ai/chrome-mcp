@@ -1,35 +1,28 @@
 /**
- * Service-account auth with zero dependencies: an RS256 JWT signed with node:crypto, exchanged
- * for an access token over global fetch. Tokens are cached in memory only.
+ * Access-token source, selected explicitly by policy.authMode:
+ *  - "service-account" (default): an RS256 JWT signed with node:crypto, exchanged over global fetch.
+ *  - "oauth": the stored refresh token (see oauth.ts), exchanged for a downscoped access token.
+ * There is no fallback between the two: a misconfigured mode fails loudly instead of silently
+ * switching identity. Tokens are cached in memory only.
  */
-import { createSign } from 'node:crypto';
-import { loadPolicy, loadServiceAccountKey, type ServiceAccountKey } from './store';
+import { createHash, createSign } from 'node:crypto';
+import { loginStatus, refreshAccessToken } from './oauth';
+import { SERVICE_SCOPES, scopesFor } from './scopes';
+import {
+  loadOAuthClient,
+  loadOAuthRecord,
+  loadPolicy,
+  loadServiceAccountKey,
+  type ServiceAccountKey,
+} from './store';
+
+export { scopesFor };
 
 const DEFAULT_TOKEN_URI = 'https://oauth2.googleapis.com/token';
-const SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
-
-/** Default (read-write) scope per Discovery service; a read-only policy narrows it. */
-const SERVICE_SCOPES: Record<string, { rw: string; ro: string }> = {
-  sheets: { rw: 'spreadsheets', ro: 'spreadsheets.readonly' },
-  docs: { rw: 'documents', ro: 'documents.readonly' },
-  drive: { rw: 'drive', ro: 'drive.readonly' },
-  slides: { rw: 'presentations', ro: 'presentations.readonly' },
-  calendar: { rw: 'calendar', ro: 'calendar.readonly' },
-  forms: { rw: 'forms.body', ro: 'forms.body.readonly' },
-};
 
 const cache = new Map<string, { token: string; expiresAt: number }>();
 
 const TOKEN_TIMEOUT_MS = 30_000;
-
-export function scopesFor(service: string, readOnly: boolean): string[] {
-  const s = SERVICE_SCOPES[service];
-  if (!s)
-    throw new Error(
-      `no default scope for service "${service}"; supported: ${Object.keys(SERVICE_SCOPES).join(', ')}`,
-    );
-  return [SCOPE_PREFIX + (readOnly ? s.ro : s.rw)];
-}
 
 const b64url = (input: Buffer | string) =>
   Buffer.from(input).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -62,9 +55,39 @@ function assertGoogleTokenUri(uri: string): void {
 }
 
 export async function getAccessToken(scopes: string[]): Promise<string> {
+  const policy = loadPolicy();
+  if (policy.invalid) throw new Error(`google-policy.json rejected: ${policy.invalid}`);
+  if (policy.authMode === 'oauth') return getOAuthAccessToken(scopes);
+  return getServiceAccountToken(scopes);
+}
+
+async function getOAuthAccessToken(scopes: string[]): Promise<string> {
+  const stored = await loadOAuthRecord();
+  if (!stored) throw new Error('not logged in: run google_auth_login (policy.authMode is "oauth")');
+  // A cached token is only valid for the client config that is current NOW: a swapped or edited
+  // google-oauth-client.json must not keep serving tokens minted under the previous one.
+  const client = loadOAuthClient();
+  if (!client) throw new Error('no OAuth client configured (google-oauth-client.json)');
+  if (client.client_id !== stored.record.client_id)
+    throw new Error(
+      'stored login belongs to a different OAuth client; run google_auth_logout then google_auth_login',
+    );
+  const clientTag = createHash('sha256')
+    .update(`${client.client_id}\0${client.client_secret ?? ''}`)
+    .digest('hex')
+    .slice(0, 16);
+  const cacheKey = `oauth|${clientTag}|${stored.record.obtained_at}|${scopes.slice().sort().join(' ')}`;
+  const hit = cache.get(cacheKey);
+  if (hit && hit.expiresAt - 60_000 > Date.now()) return hit.token;
+  const fresh = await refreshAccessToken(scopes);
+  cache.set(cacheKey, { token: fresh.token, expiresAt: Date.now() + fresh.expiresIn * 1000 });
+  return fresh.token;
+}
+
+async function getServiceAccountToken(scopes: string[]): Promise<string> {
   const loaded = await loadServiceAccountKey();
   if (!loaded) throw new Error('no Google service-account key configured (run google-import-key)');
-  const cacheKey = `${loaded.key.client_email}|${scopes.slice().sort().join(' ')}`;
+  const cacheKey = `sa|${loaded.key.client_email}|${scopes.slice().sort().join(' ')}`;
   const hit = cache.get(cacheKey);
   if (hit && hit.expiresAt - 60_000 > Date.now()) return hit.token;
 
@@ -97,16 +120,44 @@ export function clearTokenCache(): void {
   cache.clear();
 }
 
-/** Never includes the private key or any token. */
+/** Never includes the private key, refresh token, verifier, state or any access token. */
 export async function authStatus(): Promise<Record<string, unknown>> {
-  const loaded = await loadServiceAccountKey();
+  const policy = loadPolicy();
+  const sa = await loadServiceAccountKey();
+  const oauthRec = await loadOAuthRecord();
+  let client: ReturnType<typeof loadOAuthClient> = null;
+  let clientFileInvalid: string | null = null;
+  try {
+    client = loadOAuthClient();
+  } catch (e: any) {
+    clientFileInvalid = e?.message ?? String(e); // status must still answer on a bad client file
+  }
   return {
-    configured: loaded !== null,
-    source: loaded?.source ?? null,
-    clientEmail: loaded?.key.client_email ?? null,
-    projectId: loaded?.key.project_id ?? null,
+    authMode: policy.authMode,
+    // Kept for phase 2 callers: describes the service-account credential.
+    configured: sa !== null,
+    source: sa?.source ?? null,
+    clientEmail: sa?.key.client_email ?? null,
+    projectId: sa?.key.project_id ?? null,
+    serviceAccount: {
+      configured: sa !== null,
+      source: sa?.source ?? null,
+      clientEmail: sa?.key.client_email ?? null,
+      projectId: sa?.key.project_id ?? null,
+    },
+    oauth: {
+      clientConfigured: client !== null,
+      clientFileInvalid,
+      loggedIn: oauthRec !== null,
+      source: oauthRec?.source ?? null,
+      grantedScopes: oauthRec?.record.scopes ?? [],
+      obtainedAt: oauthRec?.record.obtained_at ?? null,
+      login: loginStatus(),
+    },
+    activeCredentialReady:
+      policy.authMode === 'oauth' ? oauthRec !== null && client !== null : sa !== null,
     cachedTokens: cache.size,
-    policy: loadPolicy(),
+    policy,
     supportedServices: Object.keys(SERVICE_SCOPES),
   };
 }

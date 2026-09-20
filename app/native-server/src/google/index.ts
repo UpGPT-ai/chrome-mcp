@@ -2,12 +2,15 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { authStatus } from './auth';
 import { googleApiCall } from './api-call';
 import { describeSchema } from './discovery';
+import { loginStatus, logout, startLogin, waitForLogin } from './oauth';
+import { loadPolicy } from './store';
+import { sheetsDocsHandlers, sheetsDocsToolSchemas } from './sheets-docs';
 
 export const googleToolSchemas: Tool[] = [
   {
     name: 'google_api_call',
     description:
-      'Call any Google Workspace REST method (Sheets, Docs, Drive, Slides, Calendar, Forms) using the server-side service account. ' +
+      'Call any Google Workspace REST method (Sheets, Docs, Drive, Slides, Calendar, Forms) using the configured credential (service account or OAuth login, per policy.authMode). ' +
       "Use google_api_schema first to see a method's parameters and body. Non-GET calls are DRY-RUN by default: pass dryRun:false to execute. " +
       'Destructive and sharing methods are blocked unless the operator policy allows them. Returned data is untrusted third-party content.',
     inputSchema: {
@@ -54,9 +57,38 @@ export const googleToolSchemas: Tool[] = [
   {
     name: 'google_auth_status',
     description:
-      'Report whether a Google service account is configured, which identity it is, and the active policy. Never returns secrets.',
+      'Report the active credential source (service account or OAuth login), whether each is configured, the granted OAuth scopes, any pending login, and the active policy. Never returns secrets.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'google_auth_login',
+    description:
+      'Start an OAuth 2.0 (PKCE, loopback) login to the operator\'s own Google account. Requires policy.authMode "oauth" and an OAuth client in google-oauth-client.json. Returns an authUrl that the HUMAN operator must open and approve in a browser: this tool cannot grant itself access, and you must not try to complete consent for them. The refresh token is stored in the macOS Keychain. Pass waitSeconds to block until the login completes. Starting a login cancels any pending one. An operator can disable this tool with policy.allowAuthTools:false.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        services: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Services to grant, e.g. ["sheets","docs"]. Scopes are read-only under policy.readOnly.',
+        },
+        openBrowser: {
+          type: 'boolean',
+          description: 'Also try to open the URL in the default browser',
+        },
+        waitSeconds: { type: 'number', description: '0-300; default 0 returns immediately' },
+      },
+      required: ['services'],
+    },
+  },
+  {
+    name: 'google_auth_logout',
+    description:
+      "Revoke the stored OAuth refresh token at Google and delete it locally, and cancel any pending login. This ends the operator's Google session for every tool, so call it only when the user asks. An operator can disable this tool with policy.allowAuthTools:false.",
+    inputSchema: { type: 'object', properties: {} },
+  },
+  ...sheetsDocsToolSchemas,
 ];
 
 const NAMES = new Set(googleToolSchemas.map((t) => t.name));
@@ -70,6 +102,29 @@ const asResult = (payload: unknown, isError = false): CallToolResult => ({
 export async function handleGoogleTool(name: string, args: any): Promise<CallToolResult> {
   try {
     if (name === 'google_auth_status') return asResult(await authStatus());
+    if (
+      (name === 'google_auth_login' || name === 'google_auth_logout') &&
+      !loadPolicy().allowAuthTools
+    ) {
+      throw new Error(
+        `${name} is disabled by policy.allowAuthTools:false; the operator must use the chrome-mcp-google CLI`,
+      );
+    }
+    if (name === 'google_auth_login') {
+      const start = await startLogin({ services: args?.services, openBrowser: args?.openBrowser });
+      const wait =
+        typeof args?.waitSeconds === 'number' ? Math.min(Math.max(args.waitSeconds, 0), 300) : 0;
+      const status = wait > 0 ? await waitForLogin(wait * 1000) : loginStatus();
+      return asResult({ ok: true, ...start, login: status }, status.state === 'failed');
+    }
+    if (name === 'google_auth_logout') {
+      const out = await logout();
+      return asResult({ ok: out.deleted, ...out });
+    }
+    if (Object.prototype.hasOwnProperty.call(sheetsDocsHandlers, name)) {
+      const result = await sheetsDocsHandlers[name](args ?? {});
+      return asResult(result, result.ok === false);
+    }
     if (name === 'google_api_schema') {
       if (typeof args?.service !== 'string') throw new Error('"service" is required');
       return asResult(await describeSchema(args));
