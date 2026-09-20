@@ -7,6 +7,8 @@ import { AUTH_DIR_ENV } from '../security/local-auth';
 import { clearTokenCache } from './auth';
 import { clearDiscoveryMemory } from './discovery';
 import { NO_KEYCHAIN_ENV, saveServiceAccountKey } from './store';
+import { DEFAULT_RESPONSE_BYTES, MAX_RESPONSE_BYTES, responseCap } from './api-call';
+import { DANGEROUS_FUNCTION, FORMULA_TRIGGER } from './formulas';
 import {
   chooseWriteMode,
   flattenDocContent,
@@ -418,6 +420,173 @@ describe('google_sheets_update', () => {
     writePolicy({ readOnly: true });
     const r = await call('google_sheets_update', { ...args, dryRun: false, overwrite: true });
     expect(r).toMatchObject({ blocked: true, reason: expect.stringMatching(/readOnly/) });
+  });
+});
+
+describe('formula gates (M1, M2, M3, M4, L5)', () => {
+  const api = (method: string, params: object, body: unknown) =>
+    call('google_api_call', { service: 'sheets', method, params, body, dryRun: false });
+  const upd = (extra: object, values: unknown[][] = [['=SUM(A1:A2)']]) =>
+    api('spreadsheets.values.update', { spreadsheetId: SID, range: 'A1', ...extra }, { values });
+
+  test('google_api_call cannot write formulas with USER_ENTERED unless policy.allowFormulas', async () => {
+    expect(await upd({ valueInputOption: 'USER_ENTERED' })).toMatchObject({
+      blocked: true,
+      reason: expect.stringMatching(/allowFormulas/),
+    });
+    expect(await upd({ valueInputOption: 'user_entered' })).toMatchObject({ blocked: true });
+    expect(
+      await api(
+        'spreadsheets.values.append',
+        { spreadsheetId: SID, range: 'A1', valueInputOption: 'USER_ENTERED' },
+        { values: [['+1']] },
+      ),
+    ).toMatchObject({ blocked: true });
+    expect(apiCalls()).toHaveLength(0);
+    // RAW and plain USER_ENTERED text are unaffected
+    expect((await upd({ valueInputOption: 'RAW' })).ok).toBe(true);
+    expect((await upd({ valueInputOption: 'USER_ENTERED' }, [['2026-01-01', 5]])).ok).toBe(true);
+  });
+  test('formulaValue in batchUpdate (updateCells / repeatCell, snake_case too) is refused', async () => {
+    const cell = { userEnteredValue: { formulaValue: '=A1' } };
+    const bodies = [
+      { requests: [{ updateCells: { rows: [{ values: [cell] }], fields: '*' } }] },
+      { requests: [{ repeatCell: { cell, fields: '*' } }] },
+      {
+        requests: [
+          {
+            update_cells: {
+              rows: [{ values: [{ user_entered_value: { formula_value: '=A1' } }] }],
+            },
+          },
+        ],
+      },
+    ];
+    for (const b of bodies)
+      expect(await api('spreadsheets.batchUpdate', { spreadsheetId: SID }, b)).toMatchObject({
+        blocked: true,
+        reason: expect.stringMatching(/formulaValue/),
+      });
+    expect(apiCalls()).toHaveLength(0);
+  });
+  test('with allowFormulas the dangerous-function scan still applies to google_api_call', async () => {
+    writePolicy({ allowFormulas: true });
+    expect((await upd({ valueInputOption: 'USER_ENTERED' })).ok).toBe(true);
+    expect(
+      await upd({ valueInputOption: 'USER_ENTERED' }, [['=IMPORTXML("http://x","//a")']]),
+    ).toMatchObject({ blocked: true, reason: expect.stringMatching(/blocked function/) });
+    expect(
+      await api(
+        'spreadsheets.batchUpdate',
+        { spreadsheetId: SID },
+        {
+          requests: [
+            { repeatCell: { cell: { userEnteredValue: { formulaValue: '=IMAGE("u")' } } } },
+          ],
+        },
+      ),
+    ).toMatchObject({ blocked: true });
+    expect(
+      await api(
+        'spreadsheets.batchUpdate',
+        { spreadsheetId: SID },
+        { requests: [{ repeatCell: { cell: { userEnteredValue: { formulaValue: '=A1+1' } } } }] },
+      ),
+    ).toMatchObject({ ok: true });
+  });
+  test('DANGEROUS_FUNCTION covers the extended list, whitespace, case and sheet prefixes', () => {
+    const bad = [
+      '=IMPORTRANGE("a","b")',
+      '=ImportData ("u")',
+      '=IMPORTFEED("u")',
+      '=IMPORTHTML("u","t",1)',
+      '=Sheet1!IMPORTXML("u","//a")',
+      '=\'My Sheet\'!IMAGE("u")',
+      '=HYPERLINK\n("u")',
+      '=AI("prompt")',
+      '=GOOGLEFINANCE("GOOG")',
+      '=WEBSERVICE("u")',
+      '=CUBEVALUE("c")',
+      '=cubemember("c")',
+      '=QUERY(A1:B2,"select *")&"http://evil"',
+      '=QUERY("https://x/y.csv","select *")',
+      '=IMPORT\u200b(1)',
+      '=_xlfn.IMAGE("u")',
+    ];
+    for (const f of bad) expect(DANGEROUS_FUNCTION.test(f)).toBe(true);
+    for (const f of ['=SUM(A1:A2)', '=MAIL(1)', '=QUERY(A1:B2,"select A")', '=A1+1', '=DAI(1)'])
+      expect(DANGEROUS_FUNCTION.test(f)).toBe(false);
+    const { scan } = validateValues([
+      ['=AI("x")', 'the AI (assistant) said', '=QUERY("http://a","x")'],
+    ]);
+    expect(scan.dangerousCells).toBe(2); // plain text is not a formula, so it is not counted
+  });
+  test('FORMULA_TRIGGER ignores invisible/format/separator characters and quotes', () => {
+    for (const lead of [
+      '\u200b',
+      '\u2060',
+      '\u0085',
+      '\ufeff',
+      '\u180e',
+      '\u00a0',
+      '\u2028',
+      "'",
+      '"',
+      '\t',
+      ' \u200b\u2060',
+    ])
+      for (const c of ['=', '+', '-', '@']) expect(FORMULA_TRIGGER.test(`${lead}${c}1`)).toBe(true);
+    expect(FORMULA_TRIGGER.test('a=1')).toBe(false);
+    expect(validateValues([['\u200b=1+1']]).scan.formulaCells).toBe(1);
+  });
+  test('append with insertDataOption OVERWRITE needs overwrite:true to execute', async () => {
+    const a = {
+      spreadsheetId: SID,
+      range: 'Log!A:B',
+      values: [['a']],
+      insertDataOption: 'OVERWRITE',
+    };
+    expect(await call('google_sheets_append', { ...a, dryRun: false })).toMatchObject({
+      blocked: true,
+      reason: expect.stringMatching(/overwrite:true/),
+    });
+    expect(apiCalls()).toHaveLength(0);
+    expect((await call('google_sheets_append', a)).ok).toBe(true); // dry-run
+    expect(apiCalls()).toHaveLength(0);
+    const ok = await call('google_sheets_append', { ...a, dryRun: false, overwrite: true });
+    expect(ok.ok).toBe(true);
+    expect(String(apiCalls()[0][0])).toContain('insertDataOption=OVERWRITE');
+    expect(
+      await call('google_sheets_append', { ...a, dryRun: false, overwrite: 'true' }),
+    ).toMatchObject({ blocked: true });
+  });
+  test('ensure_tab dry-run never contacts the spreadsheet or the token endpoint', async () => {
+    const r = await call('google_sheets_ensure_tab', { spreadsheetId: SID, title: 'Anything' });
+    expect(r).toMatchObject({ ok: true, dryRun: true, created: false, existenceChecked: false });
+    expect(apiCalls()).toHaveLength(0);
+    expect(
+      (fetchMock.mock.calls as any[][]).some((c) => String(c[0]).includes('oauth2.googleapis.com')),
+    ).toBe(false);
+  });
+  test('maxResponseBytes: NaN, junk, negative and huge values are clamped', () => {
+    expect(responseCap(NaN)).toBe(DEFAULT_RESPONSE_BYTES);
+    expect(responseCap('x')).toBe(DEFAULT_RESPONSE_BYTES);
+    expect(responseCap(undefined)).toBe(DEFAULT_RESPONSE_BYTES);
+    expect(responseCap(Infinity)).toBe(DEFAULT_RESPONSE_BYTES);
+    expect(responseCap(-5)).toBe(1024);
+    expect(responseCap(0)).toBe(1024);
+    expect(responseCap(1e12)).toBe(MAX_RESPONSE_BYTES);
+    expect(responseCap('4096')).toBe(4096);
+  });
+  test('a NaN maxResponseBytes does not disable the cap end to end', async () => {
+    route(() => new Response('x'.repeat(DEFAULT_RESPONSE_BYTES + 5000), { status: 200 }));
+    const r = await call('google_api_call', {
+      service: 'sheets',
+      method: 'spreadsheets.get',
+      params: { spreadsheetId: SID },
+      maxResponseBytes: 'NaN',
+    });
+    expect(r.truncated).toBe(true);
   });
 });
 

@@ -7,6 +7,7 @@
  */
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { googleApiCall, UNTRUSTED_NOTE, MAX_RESPONSE_BYTES, type ApiCallResult } from './api-call';
+import { DANGEROUS_FUNCTION, FORMULA_TRIGGER } from './formulas';
 import { loadPolicy } from './store';
 
 export const MAX_CELLS = 50_000;
@@ -47,10 +48,7 @@ const flag = (v: unknown): boolean => v === true;
 
 export type Cell = string | number | boolean | null;
 
-/** A cell that Sheets would parse as a formula (or a signed number) under USER_ENTERED. */
-export const FORMULA_TRIGGER = /^[\s\u0000-\u001f]*[=+\-@]/;
-/** Network / exfiltration functions that stay blocked even when formulas are allowed. */
-export const DANGEROUS_FUNCTION = /\b(IMPORT[A-Z]*|IMAGE|HYPERLINK)\s*\(/i;
+export { FORMULA_TRIGGER, DANGEROUS_FUNCTION };
 
 export interface ValueScan {
   cells: number;
@@ -72,8 +70,11 @@ export function validateValues(values: unknown): { values: Cell[][]; scan: Value
       if (typeof c === 'string') {
         if (c.length > MAX_CELL_CHARS)
           throw new Error(`a cell exceeds ${MAX_CELL_CHARS} characters`);
-        if (FORMULA_TRIGGER.test(c)) scan.formulaCells++;
-        if (DANGEROUS_FUNCTION.test(c)) scan.dangerousCells++;
+        if (FORMULA_TRIGGER.test(c)) {
+          scan.formulaCells++;
+          // only a cell Sheets would parse as a formula can call a function
+          if (DANGEROUS_FUNCTION.test(c)) scan.dangerousCells++;
+        }
       }
       if (++scan.cells > MAX_CELLS) throw new Error(`more than ${MAX_CELLS} cells in one write`);
     }
@@ -102,7 +103,10 @@ export function chooseWriteMode(args: any, scan: ValueScan): WriteMode | { block
     };
   }
   if (scan.dangerousCells > 0)
-    return { blocked: 'cells call IMPORT*/IMAGE/HYPERLINK, which are never allowed from a helper' };
+    return {
+      blocked:
+        'cells call IMPORT*/IMAGE/HYPERLINK/AI/GOOGLEFINANCE/WEBSERVICE/CUBE*/QUERY(url), which are never allowed from a helper',
+    };
   if (scan.formulaCells > 0) {
     if (!flag(args.allowFormulas))
       return {
@@ -155,6 +159,14 @@ export async function sheetsAppend(args: any): Promise<ApiCallResult> {
   const insertDataOption =
     optEnum(args.insertDataOption, 'insertDataOption', ['INSERT_ROWS', 'OVERWRITE'] as const) ??
     'INSERT_ROWS';
+  if (insertDataOption === 'OVERWRITE' && args.dryRun === false && !flag(args.overwrite))
+    return {
+      ok: false,
+      blocked: true,
+      reason:
+        'insertDataOption OVERWRITE writes over existing cells below the table; pass overwrite:true to acknowledge, or use INSERT_ROWS',
+      helper: 'google_sheets_append',
+    };
   const mode = chooseWriteMode(args, scan);
   if ('blocked' in mode)
     return { ok: false, blocked: true, reason: mode.blocked, helper: 'google_sheets_append' };
@@ -215,18 +227,32 @@ export async function sheetsEnsureTab(args: any): Promise<ApiCallResult> {
       '"title" must be 1-100 characters without control characters or [ ] * / \\ ? :',
     );
 
+  const dryRun = args.dryRun !== false;
+  const request = {
+    service: 'sheets',
+    method: 'spreadsheets.batchUpdate',
+    params: { spreadsheetId },
+    body: { requests: [{ addSheet: { properties: { title } } }] },
+  };
+  if (dryRun) {
+    // A dry-run must not touch the spreadsheet or use a token: no existence check, just the
+    // policy-checked preview of the create request.
+    const preview = await googleApiCall({ ...request, dryRun: true });
+    return withHelper('google_sheets_ensure_tab', {
+      ...preview,
+      title,
+      created: false,
+      existenceChecked: false,
+      note: 'dry-run: the spreadsheet was not contacted, so whether the tab already exists was not checked; with dryRun:false an existing tab is left alone.',
+    });
+  }
+
   const existing = await tabExists(spreadsheetId, title);
   if ('response' in existing) return existing.response;
   if (existing.found)
     return { ok: true, helper: 'google_sheets_ensure_tab', created: false, exists: true, title };
 
-  const r = await googleApiCall({
-    service: 'sheets',
-    method: 'spreadsheets.batchUpdate',
-    params: { spreadsheetId },
-    body: { requests: [{ addSheet: { properties: { title } } }] },
-    dryRun: args.dryRun !== false,
-  });
+  const r = await googleApiCall({ ...request, dryRun: false });
   if (!r.ok && r.status === 400 && /already exists/i.test(JSON.stringify(r.data ?? ''))) {
     return { ok: true, helper: 'google_sheets_ensure_tab', created: false, exists: true, title };
   }
@@ -391,7 +417,15 @@ export const sheetsDocsToolSchemas: Tool[] = [
           description: 'Tab or A1 range locating the table, e.g. "Log!A:D"',
         },
         values: VALUES_PROP,
-        insertDataOption: { type: 'string', enum: ['INSERT_ROWS', 'OVERWRITE'] },
+        insertDataOption: {
+          type: 'string',
+          enum: ['INSERT_ROWS', 'OVERWRITE'],
+          description: 'OVERWRITE also needs overwrite:true to execute.',
+        },
+        overwrite: {
+          type: 'boolean',
+          description: 'Must be true to acknowledge insertDataOption OVERWRITE replaces cells.',
+        },
         ...INPUT_PROPS,
         dryRun: { type: 'boolean' },
       },
@@ -419,7 +453,7 @@ export const sheetsDocsToolSchemas: Tool[] = [
   },
   {
     name: 'google_sheets_ensure_tab',
-    description: `Create a tab (sheet) with the given title if it does not exist; a no-op when it does. ${SHARED_WRITE_NOTE}`,
+    description: `Create a tab (sheet) with the given title if it does not exist; a no-op when it does. A dry-run does NOT check whether the tab exists (it makes no spreadsheet call); it only previews the request. ${SHARED_WRITE_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
