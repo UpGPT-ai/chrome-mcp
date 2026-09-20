@@ -56,6 +56,21 @@ https-only, `*.googleapis.com`-only URLs (including the token URI), `..` path se
 untrusted-content envelope. Discovery documents are cached for 7 days under `~/.chrome-mcp-agent/discovery/`; a cached
 file that fails structural validation is discarded and refetched.
 
+## Known limits (read before granting access)
+
+- **The policy gate is a guard rail, not a sandbox.** Destructive detection matches method names and body keys
+  (camelCase and snake_case). Several overwriting requests are not classed as destructive: Sheets `cutPaste`,
+  `findReplace`, `values.update`, Docs `replaceAllText`, and `drive.files.watch`. Use `readOnly` or a resource
+  allowlist when overwrites matter.
+- **Formula channels.** A cell value such as `=IMPORTRANGE(...)` or `=IMAGE(...)` can move data to another
+  spreadsheet or a remote URL. The gate does not inspect cell contents.
+- **`dryRun` is advisory.** It builds and policy-checks the request but is not a server-side simulation.
+- **Responses are buffered in memory** before the size cap truncates them, so a very large response still costs
+  memory up to the fetch's own limits.
+- Bodies nested deeper than 12 levels are refused (destructive check) and fail any scoped allowlist.
+- The service-account key in the Keychain and the policy file are readable and editable by any process running as
+  the same user.
+
 ## Bridge hardening
 
 Every request must pass:

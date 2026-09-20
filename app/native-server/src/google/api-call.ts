@@ -42,7 +42,18 @@ const BODY_ID_KEYS = new Set([
   'addParents',
   'removeParents',
   'destination',
+  'targetId',
 ]);
+/** Depth beyond which a body is not inspected; past it the gates fail closed. */
+const MAX_BODY_DEPTH = 12;
+const TOO_DEEP_ID = '\u0000body-too-deep-to-inspect';
+/** Google's JSON parsers accept proto snake_case as well as camelCase; match on camelCase. */
+const camelKey = (k: string): string =>
+  k.replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
+const isTrue = (v: unknown): boolean =>
+  v === true ||
+  v === 1 ||
+  (typeof v === 'string' && ['true', '1'].includes(v.trim().toLowerCase()));
 /** Request keys inside a batchUpdate body that destroy or share content. */
 const DESTRUCTIVE_BODY_KEY = /^(delete|remove|clear|trash|empty)[A-Z]/;
 const EVENT_WRITE = /(^|\.)events\.(insert|update|patch|import|move|quickAdd)$/;
@@ -60,16 +71,21 @@ export function isDestructive(m: DiscoveryMethod): boolean {
 export function bodyDestructiveReason(m: DiscoveryMethod, body: unknown): string | null {
   let reason: string | null = null;
   const walk = (node: unknown, depth: number): void => {
-    if (reason || depth > 12 || node === null || typeof node !== 'object') return;
+    if (reason || node === null || typeof node !== 'object') return;
+    if (depth > MAX_BODY_DEPTH) {
+      reason = 'body nesting too deep to inspect';
+      return;
+    }
     if (Array.isArray(node)) {
       node.forEach((n) => walk(n, depth + 1));
       return;
     }
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (DESTRUCTIVE_BODY_KEY.test(k)) reason = `body contains "${k}"`;
-      else if (k === 'trashed' && v === true) reason = 'body sets trashed:true';
-      else if (k === 'attendees' && Array.isArray(v) && v.length > 0 && EVENT_WRITE.test(m.id))
-        reason = 'event write invites attendees';
+    for (const [rawKey, v] of Object.entries(node as Record<string, unknown>)) {
+      const k = camelKey(rawKey);
+      if (DESTRUCTIVE_BODY_KEY.test(k)) reason = `body contains "${rawKey}"`;
+      else if (k === 'trashed' && isTrue(v)) reason = 'body sets trashed:true';
+      else if (k === 'attendees' && Array.isArray(v) && EVENT_WRITE.test(m.id))
+        reason = 'event write changes attendees';
       if (reason) return;
       walk(v, depth + 1);
     }
@@ -80,21 +96,27 @@ export function bodyDestructiveReason(m: DiscoveryMethod, body: unknown): string
 
 function collectBodyIds(body: unknown): string[] {
   const ids: string[] = [];
-  const walk = (node: unknown, depth: number): void => {
-    if (depth > 12 || node === null || typeof node !== 'object') return;
-    if (Array.isArray(node)) {
-      node.forEach((n) => walk(n, depth + 1));
+  const walk = (node: unknown, depth: number, parentKey: string): void => {
+    if (node === null || typeof node !== 'object') return;
+    if (depth > MAX_BODY_DEPTH) {
+      ids.push(TOO_DEEP_ID); // never in an allowlist, so a scoped policy denies it
       return;
     }
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (BODY_ID_KEYS.has(k)) {
+    if (Array.isArray(node)) {
+      node.forEach((n) => walk(n, depth + 1, parentKey));
+      return;
+    }
+    for (const [rawKey, v] of Object.entries(node as Record<string, unknown>)) {
+      const k = camelKey(rawKey);
+      // a bare `id` names a calendar in calendarList.insert (root) and freebusy items[]
+      if (BODY_ID_KEYS.has(k) || (k === 'id' && (depth === 0 || parentKey === 'items'))) {
         const vals = Array.isArray(v) ? v : [v];
         for (const x of vals) if (typeof x === 'string' && x) ids.push(...x.split(','));
       }
-      walk(v, depth + 1);
+      walk(v, depth + 1, k);
     }
   };
-  walk(body, 0);
+  walk(body, 0, '');
   return ids;
 }
 
@@ -138,7 +160,7 @@ export function buildRequest(
   const resourceIds: string[] = [];
 
   for (const [name, value] of Object.entries(params)) {
-    const spec = declared[name];
+    const spec = Object.prototype.hasOwnProperty.call(declared, name) ? declared[name] : undefined;
     if (!spec) throw new Error(`unknown parameter "${name}" for ${m.id}`);
     const values = Array.isArray(value) ? value : [value];
     if (Array.isArray(value) && !spec.repeated)

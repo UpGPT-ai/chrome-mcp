@@ -348,8 +348,46 @@ describe('body + non-path resource gates', () => {
     expect(bodyDestructiveReason(m, { trashed: false })).toBeNull();
     const ev = { id: 'calendar.events.insert', httpMethod: 'POST', path: '' };
     expect(bodyDestructiveReason(ev, { attendees: [{ email: 'a@b.c' }] })).toMatch(/attendees/);
-    expect(bodyDestructiveReason(ev, { attendees: [] })).toBeNull();
+    expect(bodyDestructiveReason(ev, { attendees: [] })).toMatch(/attendees/);
     expect(bodyDestructiveReason(m, { attendees: [{ email: 'a@b.c' }] })).toBeNull();
+  });
+  test('snake_case keys and stringly-typed trashed cannot dodge the body gate', () => {
+    const m = batch();
+    expect(bodyDestructiveReason(m, { requests: [{ delete_sheet: { sheet_id: 1 } }] })).toMatch(
+      /delete_sheet/,
+    );
+    expect(bodyDestructiveReason(m, { requests: [{ clear_values: {} }] })).toMatch(/clear_values/);
+    for (const v of [true, 'true', 'TRUE', 1, '1']) {
+      expect(bodyDestructiveReason(m, { trashed: v })).toMatch(/trashed/);
+    }
+    for (const v of [false, 'false', 0, null]) {
+      expect(bodyDestructiveReason(m, { trashed: v })).toBeNull();
+    }
+  });
+  test('bodies nested past the inspection depth fail closed', () => {
+    let deep: any = { deleteSheet: {} };
+    for (let i = 0; i < 20; i++) deep = { a: deep };
+    expect(bodyDestructiveReason(batch(), deep)).toMatch(/too deep/);
+    const r = buildRequest(sheetsDoc, batch(), { spreadsheetId: 'S1' }, deep);
+    const verdict = checkPolicy(
+      { ...base, allowedResourceIds: ['S1'] },
+      'sheets',
+      batch(),
+      r,
+      deep,
+    );
+    expect(verdict.allowed).toBe(false);
+  });
+  test('snake_case, targetId and bare id fields reach the allowlist', () => {
+    const ids = (body: unknown) =>
+      buildRequest(sheetsDoc, batch(), { spreadsheetId: 'S1' }, body).resourceIds;
+    expect(ids({ destination_spreadsheet_id: 'EVIL1' })).toContain('EVIL1');
+    expect(ids({ targetId: 'EVIL2' })).toContain('EVIL2');
+    expect(ids({ id: 'EVIL3' })).toContain('EVIL3');
+    expect(ids({ items: [{ id: 'EVIL4' }] })).toContain('EVIL4');
+    expect(
+      ids({ requests: [{ addSheet: { properties: { id: 'not-a-resource' } } }] }),
+    ).not.toContain('not-a-resource');
   });
   test('checkPolicy blocks a destructive body unless allowDestructive', () => {
     const body = { requests: [{ deleteSheet: { sheetId: 1 } }] };

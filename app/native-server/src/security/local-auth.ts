@@ -111,6 +111,7 @@ export function getOrCreateAuthToken(): string | null {
       }
     }
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(file), 0o700);
     const token = randomBytes(32).toString('hex');
     fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
     fs.chmodSync(file, 0o600);
