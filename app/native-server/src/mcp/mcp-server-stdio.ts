@@ -10,6 +10,8 @@ import {
   ListPromptsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { TOOL_SCHEMAS } from 'chrome-mcp-shared';
+import { authHeaders } from '../security/local-auth';
+import { googleToolSchemas } from '../google';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import * as fs from 'fs';
@@ -63,7 +65,9 @@ export const ensureMcpClient = async () => {
 
     const config = loadConfig();
     mcpClient = new Client({ name: 'Mcp Chrome Proxy', version: '1.0.0' }, { capabilities: {} });
-    const transport = new StreamableHTTPClientTransport(new URL(config.url), {});
+    const transport = new StreamableHTTPClientTransport(new URL(config.url), {
+      requestInit: { headers: authHeaders() },
+    });
     await mcpClient.connect(transport);
     return mcpClient;
   } catch (error) {
@@ -75,7 +79,9 @@ export const ensureMcpClient = async () => {
 
 export const setupTools = (server: Server) => {
   // List tools handler
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [...TOOL_SCHEMAS, ...googleToolSchemas],
+  }));
 
   // Call tool handler
   server.setRequestHandler(CallToolRequestSchema, async (request) =>

@@ -7,6 +7,7 @@ import {
 import nativeMessagingHostInstance from '../native-messaging-host';
 import { NativeMessageType, TOOL_SCHEMAS } from 'chrome-mcp-shared';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { googleToolSchemas, isGoogleTool, handleGoogleTool } from '../google';
 
 async function listDynamicFlowTools(): Promise<Tool[]> {
   try {
@@ -70,7 +71,7 @@ export const setupTools = (server: Server) => {
   // List tools handler
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const dynamicTools = await listDynamicFlowTools();
-    return { tools: [...TOOL_SCHEMAS, ...dynamicTools] };
+    return { tools: [...TOOL_SCHEMAS, ...googleToolSchemas, ...dynamicTools] };
   });
 
   // Call tool handler
@@ -81,6 +82,8 @@ export const setupTools = (server: Server) => {
 
 const handleToolCall = async (name: string, args: any): Promise<CallToolResult> => {
   try {
+    // Google Workspace tools run in the native host (server-side credentials), not the extension.
+    if (isGoogleTool(name)) return await handleGoogleTool(name, args);
     // If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
     if (name && name.startsWith('flow.')) {
       // We need to resolve flow by slug to ID

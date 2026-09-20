@@ -100,7 +100,8 @@ Add the following configuration to your MCP client configuration (using CherrySt
   "mcpServers": {
     "chrome-mcp-server": {
       "type": "streamableHttp",
-      "url": "http://127.0.0.1:12306/mcp"
+      "url": "http://127.0.0.1:12306/mcp",
+      "headers": { "Authorization": "Bearer <contents of ~/.chrome-mcp-agent/auth-token>" }
     }
   }
 }

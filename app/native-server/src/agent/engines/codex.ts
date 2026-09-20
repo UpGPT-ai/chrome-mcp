@@ -12,6 +12,7 @@ import type { AgentMessage, RealtimeEvent } from '../types';
 import { AgentToolBridge } from '../tool-bridge';
 import { getProject } from '../project-service';
 import { getChromeMcpUrl } from '../../constant';
+import { readAuthToken } from '../../security/local-auth';
 
 type TodoListPhase = 'started' | 'update' | 'completed';
 
@@ -33,6 +34,8 @@ interface TodoListItem {
  * 通过 AgentStreamManager 将编码后的 RealtimeEvent 推送给 sidepanel，
  * 确保数据链路「Sidepanel → Native Server → Codex CLI → Sidepanel」闭环。
  */
+const CHROME_MCP_TOKEN_ENV = 'CHROME_MCP_AUTH_TOKEN';
+
 export class CodexEngine implements AgentEngine {
   public readonly name = 'codex' as const;
   public readonly supportsMcp = false;
@@ -125,6 +128,11 @@ export class CodexEngine implements AgentEngine {
       // Set both url and type for complete HTTP MCP server configuration
       args.push('-c', `mcp_servers.chrome_mcp_http.url=${JSON.stringify(chromeMcpUrl)}`);
       args.push('-c', `mcp_servers.chrome_mcp_http.type="http"`);
+      // The token travels in the child's environment, not argv, so it never shows up in `ps`.
+      args.push(
+        '-c',
+        `mcp_servers.chrome_mcp_http.bearer_token_env_var=${JSON.stringify(CHROME_MCP_TOKEN_ENV)}`,
+      );
       console.error(`[CodexEngine] Chrome MCP server enabled: ${chromeMcpUrl}`);
     } else {
       console.error('[CodexEngine] Chrome MCP server disabled');
@@ -761,6 +769,8 @@ Work directly in the current directory. Do not create subdirectories unless spec
 
   private buildCodexEnv(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env };
+    const authToken = readAuthToken();
+    if (authToken) env[CHROME_MCP_TOKEN_ENV] = authToken;
     const extraPaths: string[] = [];
     const globalPath = process.env.NPM_GLOBAL_PATH;
     if (globalPath) {
