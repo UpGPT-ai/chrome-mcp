@@ -198,8 +198,10 @@ function finish(l: Login, status: LoginState, error?: string): void {
   l.status = status;
   l.error = error;
   clearTimeout(l.timer);
-  l.server.close();
-  (l.server as any).closeAllConnections?.();
+  l.server.close(); // stop listening now
+  // Let an in-flight response (the success/failure page) drain before dropping stragglers.
+  const t = setTimeout(() => (l.server as any).closeAllConnections?.(), 2000);
+  t.unref?.();
   l.settle();
 }
 
