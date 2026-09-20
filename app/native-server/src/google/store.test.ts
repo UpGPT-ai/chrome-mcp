@@ -9,6 +9,7 @@ import { EventEmitter } from 'node:events';
 
 const keychain = new Map<string, string>();
 let failWrites = false;
+let stuckDeletes = false; // delete fails and the entry stays (Keychain locked / denied)
 const calls: string[] = [];
 
 jest.mock('node:child_process', () => ({
@@ -19,6 +20,7 @@ jest.mock('node:child_process', () => ({
       return keychain.has(account) ? cb(null, keychain.get(account) + '\n') : cb(new Error('nf'));
     }
     calls.push(`delete:${account}`);
+    if (stuckDeletes) return cb(new Error('denied'));
     return keychain.delete(account) ? cb(null) : cb(new Error('nf'));
   },
   spawn: () => {
@@ -38,6 +40,7 @@ jest.mock('node:child_process', () => ({
 import {
   KEYCHAIN_OAUTH_ACCOUNT,
   NO_KEYCHAIN_ENV,
+  deleteOAuthRecord,
   loadOAuthRecord,
   saveOAuthRecord,
   saveServiceAccountKey,
@@ -61,6 +64,7 @@ beforeEach(() => {
   keychain.clear();
   calls.length = 0;
   failWrites = false;
+  stuckDeletes = false;
 });
 afterEach(() => {
   Object.defineProperty(process, 'platform', platform);
@@ -97,7 +101,57 @@ describe('saveOAuthRecord keychain fallback (L1)', () => {
   });
 });
 
+describe('stale Keychain entry that cannot be deleted (L8)', () => {
+  test('saveOAuthRecord fails loudly instead of writing a file the stale entry would shadow', async () => {
+    await saveOAuthRecord(rec('old-token'));
+    failWrites = true;
+    stuckDeletes = true;
+    await expect(saveOAuthRecord(rec('new-token'))).rejects.toThrow(/stale Keychain entry/);
+    expect(fs.existsSync(path.join(dir, 'agent', 'google-oauth.json'))).toBe(false);
+  });
+  test('an entry that is simply absent is not an error', async () => {
+    failWrites = true;
+    expect(await saveOAuthRecord(rec('t'))).toBe('file');
+  });
+  test('service-account save refuses the same way', async () => {
+    const key = JSON.stringify({
+      client_email: 'a@x.iam.gserviceaccount.com',
+      private_key: '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n',
+    });
+    await saveServiceAccountKey(key);
+    failWrites = true;
+    stuckDeletes = true;
+    await expect(saveServiceAccountKey(key)).rejects.toThrow(/stale Keychain entry/);
+  });
+  test('deleteOAuthRecord removes the file, then reports a Keychain entry it could not remove', async () => {
+    await saveOAuthRecord(rec('t'));
+    fs.mkdirSync(path.join(dir, 'agent'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'agent', 'google-oauth.json'), JSON.stringify(rec('f')));
+    stuckDeletes = true;
+    await expect(deleteOAuthRecord()).rejects.toThrow(/stale Keychain entry/);
+    expect(fs.existsSync(path.join(dir, 'agent', 'google-oauth.json'))).toBe(false);
+  });
+});
+
 describe('fileWrite (L6)', () => {
+  test('a throwing closeSync is not closed twice and the temp file is still removed (L9)', async () => {
+    process.env[NO_KEYCHAIN_ENV] = '1';
+    const realClose = fs.closeSync;
+    let closes = 0;
+    const spy = jest.spyOn(fs, 'closeSync').mockImplementation((fd: number) => {
+      closes++;
+      realClose(fd);
+      throw new Error('EIO');
+    });
+    try {
+      await expect(saveOAuthRecord(rec('t'))).rejects.toThrow('EIO');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(closes).toBe(1);
+    const agent = path.join(dir, 'agent');
+    expect(fs.readdirSync(agent).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
   test('creates the file 0600 regardless of umask, with no chmod and no leftover temp', async () => {
     const oldUmask = process.umask(0o000);
     const chmod = jest.spyOn(fs, 'chmodSync');

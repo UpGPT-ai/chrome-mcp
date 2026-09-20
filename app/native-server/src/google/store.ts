@@ -51,7 +51,7 @@ export interface GooglePolicy {
   allowFormulas: boolean;
   /**
    * Expose google_auth_login / google_auth_logout to the model. Default true. Set false to make
-   * both tools refuse, so only the operator (CLI: chrome-mcp-bridge google login|logout) can
+   * both tools refuse, so only the operator (CLI: chrome-mcp-google login|logout) can
    * start or end a login. Login always still needs a human to approve consent in a browser.
    */
   allowAuthTools: boolean;
@@ -145,6 +145,22 @@ function keychainDelete(account: string): Promise<boolean> {
   });
 }
 
+/**
+ * Deletes a Keychain entry and proves it is gone. `security` also exits non-zero when there was
+ * no entry, so a failed delete is only an error if a read still finds the entry afterwards.
+ * A stale entry is read before the file, so leaving one behind would shadow what we just wrote
+ * (or, on logout, keep a live refresh token).
+ */
+async function keychainDeleteVerified(account: string): Promise<void> {
+  if (await keychainDelete(account)) return;
+  if ((await keychainRead(account)) !== null) {
+    throw new Error(
+      `could not remove the stale Keychain entry (service ${KEYCHAIN_SERVICE}, account ${account}); ` +
+        `delete it in Keychain Access, or set ${NO_KEYCHAIN_ENV}=1, then retry`,
+    );
+  }
+}
+
 function fileWrite(secret: string, file: string = keyFilePath()): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   // Created 0600 from the first byte (no window where the secret is world-readable),
@@ -154,11 +170,16 @@ function fileWrite(secret: string, file: string = keyFilePath()): void {
   try {
     fd = fs.openSync(tmp, 'wx', 0o600);
     fs.writeFileSync(fd, secret);
-    fs.closeSync(fd);
-    fd = undefined;
+    const done = fd;
+    fd = undefined; // clear first so a throwing close is never closed a second time
+    fs.closeSync(done);
     fs.renameSync(tmp, file);
   } catch (e) {
-    if (fd !== undefined) fs.closeSync(fd);
+    try {
+      if (fd !== undefined) fs.closeSync(fd);
+    } catch {
+      /* the original error is the one worth reporting */
+    }
     fs.rmSync(tmp, { force: true });
     throw e;
   }
@@ -173,7 +194,7 @@ export async function saveServiceAccountKey(raw: string): Promise<KeySource> {
     if (back === raw) return 'keychain';
   }
   // Keychain is read first, so an older entry left there would shadow the new file.
-  if (useKeychain()) await keychainDelete(KEYCHAIN_ACCOUNT);
+  if (useKeychain()) await keychainDeleteVerified(KEYCHAIN_ACCOUNT);
   fileWrite(raw);
   return 'file';
 }
@@ -350,7 +371,7 @@ export async function saveOAuthRecord(rec: OAuthRecord): Promise<KeySource> {
     }
   }
   // Keychain is read first: a stale entry (old refresh token) would shadow the new file.
-  if (useKeychain()) await keychainDelete(KEYCHAIN_OAUTH_ACCOUNT);
+  if (useKeychain()) await keychainDeleteVerified(KEYCHAIN_OAUTH_ACCOUNT);
   fileWrite(raw, oauthFilePath());
   return 'file';
 }
@@ -378,6 +399,6 @@ export async function loadOAuthRecord(): Promise<{
 
 /** Removes the refresh token from every place it may live. */
 export async function deleteOAuthRecord(): Promise<void> {
-  if (useKeychain()) await keychainDelete(KEYCHAIN_OAUTH_ACCOUNT);
   fs.rmSync(oauthFilePath(), { force: true });
+  if (useKeychain()) await keychainDeleteVerified(KEYCHAIN_OAUTH_ACCOUNT);
 }
