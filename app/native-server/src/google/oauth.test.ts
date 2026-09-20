@@ -14,6 +14,7 @@ import {
   GOOGLE_AUTH_URL,
   GOOGLE_REVOKE_URL,
   GOOGLE_TOKEN_URL,
+  LOGIN_TTL_MS,
   loginStatus,
   logout,
   refreshAccessToken,
@@ -320,6 +321,97 @@ describe('loopback login', () => {
     const all = verifierProbe() + JSON.stringify(await authStatus());
     for (const secret of ['RT-secret-value', 'AT-login', 'CODE-abc', state, CLIENT.client_secret])
       expect(all).not.toContain(secret);
+  });
+});
+
+describe('login racing with logout / replacement / expiry (H1)', () => {
+  /** Holds the authorization_code exchange open until release() is called. */
+  function holdExchange() {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const inner = fetchMock.getMockImplementation()!;
+    let entered!: () => void;
+    const started = new Promise<void>((r) => (entered = r));
+    fetchMock.mockImplementation(async (url: any, init: any) => {
+      const body = new URLSearchParams(String(init?.body ?? ''));
+      if (String(url) === GOOGLE_TOKEN_URL && body.get('grant_type') === 'authorization_code') {
+        entered();
+        await gate;
+      }
+      return inner(url, init);
+    });
+    return { release, started };
+  }
+  async function beginExchange() {
+    writeFile('google-oauth-client.json', CLIENT);
+    oauthPolicy();
+    const s = await startLogin({ services: ['sheets'] });
+    const state = paramsOf(s.authUrl).get('state')!;
+    const held = holdExchange();
+    const page = get(s.port, `/callback?state=${state}&code=CODE-held`);
+    await held.started;
+    return { s, state, held, page };
+  }
+  const revoked = () =>
+    (fetchMock.mock.calls as any[][]).filter((c) => String(c[0]) === GOOGLE_REVOKE_URL);
+
+  test('logout mid-exchange: nothing is stored, the page does not claim success, the token is revoked', async () => {
+    const { held, page } = await beginExchange();
+    const out = logout();
+    held.release();
+    await out;
+    const r = await page;
+    expect(r.body).not.toMatch(/Signed in/);
+    expect(r.status).toBe(400);
+    expect(await loadOAuthRecord()).toBeNull();
+    expect(loginStatus().state).toBe('cancelled');
+    expect(revoked().length).toBeGreaterThan(0);
+  });
+  test('startLogin replacing a login mid-exchange: the old exchange saves nothing', async () => {
+    const { held, page } = await beginExchange();
+    const next = startLogin({ services: ['sheets'] });
+    held.release();
+    const s2 = await next;
+    const r = await page;
+    expect(r.body).not.toMatch(/Signed in/);
+    expect(await loadOAuthRecord()).toBeNull();
+    expect(loginStatus()).toMatchObject({ state: 'waiting', port: s2.port });
+  });
+  test('TTL expiry mid-exchange: nothing is stored and the page does not claim success', async () => {
+    writeFile('google-oauth-client.json', CLIENT);
+    oauthPolicy();
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    try {
+      const s = await startLogin({ services: ['sheets'] });
+      const state = paramsOf(s.authUrl).get('state')!;
+      const held = holdExchange();
+      const page = get(s.port, `/callback?state=${state}&code=CODE-held`);
+      await held.started;
+      jest.advanceTimersByTime(LOGIN_TTL_MS); // TTL timer only, not the 2s connection-drop grace
+      expect(loginStatus().state).toBe('expired');
+      held.release();
+      const r = await page;
+      expect(r.body).not.toMatch(/Signed in/);
+      expect(await loadOAuthRecord()).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  test('policy tightened during the exchange (readOnly now set): grant is not stored and is revoked', async () => {
+    const { held, page } = await beginExchange();
+    oauthPolicy({ readOnly: true });
+    held.release();
+    const r = await page;
+    expect(r.status).toBe(400);
+    expect(await loadOAuthRecord()).toBeNull();
+    expect(loginStatus()).toMatchObject({ state: 'failed' });
+    expect(revoked().length).toBeGreaterThan(0);
+  });
+  test('an uncontested login still completes after the same hold', async () => {
+    const { held, page } = await beginExchange();
+    held.release();
+    expect((await page).status).toBe(200);
+    expect((await loadOAuthRecord())?.record.refresh_token).toBe('RT-secret-value');
   });
 });
 

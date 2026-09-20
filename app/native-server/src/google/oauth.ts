@@ -19,7 +19,8 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
-import { scopesCovered, scopesFor } from './scopes';
+import { clearTokenCache } from './auth';
+import { SCOPE_PREFIX, SERVICE_SCOPES, scopesCovered, scopesFor } from './scopes';
 import {
   deleteOAuthRecord,
   loadOAuthClient,
@@ -159,6 +160,11 @@ export async function refreshAccessToken(
 export type LoginState = 'idle' | 'waiting' | 'complete' | 'failed' | 'expired' | 'cancelled';
 
 interface Login {
+  /** Value of the module epoch when this login was created; a bump means it was superseded. */
+  epoch: number;
+  services: string[];
+  /** The in-flight code exchange + save, so logout / a replacing login can wait for it. */
+  exchange?: Promise<void>;
   state: string;
   verifier: string;
   scopes: string[];
@@ -178,6 +184,11 @@ interface Login {
 }
 
 let current: Login | null = null;
+/**
+ * Bumped by startLogin and logout. A login captures it at creation; if it has moved by the time an
+ * await returns, that login was superseded or logged out and must not persist anything.
+ */
+let epoch = 0;
 
 const PAGE = (msg: string) =>
   `<!doctype html><meta charset="utf-8"><title>chrome-mcp Google login</title><body style="font:16px system-ui;margin:3em"><p>${msg}</p></body>`;
@@ -205,7 +216,39 @@ function finish(l: Login, status: LoginState, error?: string): void {
   l.settle();
 }
 
+/** Best-effort: a token that was issued but must not be kept is revoked at Google. */
+async function revokeQuietly(token: string | undefined): Promise<void> {
+  if (!token) return;
+  try {
+    await postForm(GOOGLE_REVOKE_URL, { token });
+  } catch {
+    /* nothing more can be done; the token is never stored */
+  }
+}
+
+/** Why a freshly obtained grant may not be stored under the CURRENT policy, or null. */
+function storeForbidden(l: Login, granted: string[]): string | null {
+  const policy = loadPolicy();
+  if (policy.invalid) return `google-policy.json rejected: ${policy.invalid}`;
+  if (policy.authMode !== 'oauth') return 'policy.authMode is no longer "oauth"';
+  if (policy.allowedServices.length) {
+    const bad = l.services.find((s) => !policy.allowedServices.includes(s));
+    if (bad) return `service "${bad}" is no longer in policy.allowedServices`;
+  }
+  if (
+    policy.readOnly &&
+    Object.values(SERVICE_SCOPES).some((s) => granted.includes(SCOPE_PREFIX + s.rw))
+  )
+    return 'policy.readOnly is now set but the grant includes write scopes';
+  return null;
+}
+
+const isLive = (l: Login): boolean => l.status === 'waiting' && l.epoch === epoch;
+
 async function completeLogin(l: Login, code: string): Promise<void> {
+  // Every await below is followed by an isLive check: a login that was cancelled, replaced, logged
+  // out or expired while the exchange was in flight must never reach saveOAuthRecord.
+  let issued: string | undefined;
   try {
     const res = await postForm(GOOGLE_TOKEN_URL, {
       grant_type: 'authorization_code',
@@ -215,9 +258,13 @@ async function completeLogin(l: Login, code: string): Promise<void> {
       client_id: l.client.client_id,
       ...(l.client.client_secret ? { client_secret: l.client.client_secret } : {}),
     });
-    if (!res.ok)
-      return finish(l, 'failed', `token exchange failed (${await describeFailure(res)})`);
+    if (!res.ok) {
+      const why = await describeFailure(res);
+      return finish(l, 'failed', `token exchange failed (${why})`);
+    }
     const data = (await res.json()) as TokenResponse;
+    issued = data.refresh_token ?? data.access_token;
+    if (!isLive(l)) return void (await revokeQuietly(issued));
     if (!data.refresh_token)
       return finish(
         l,
@@ -225,13 +272,27 @@ async function completeLogin(l: Login, code: string): Promise<void> {
         'Google returned no refresh token; remove this app at myaccount.google.com/permissions and log in again',
       );
     const granted = (data.scope ?? '').split(/\s+/).filter(Boolean);
-    l.grantedScopes = granted.length ? granted : l.scopes;
-    l.storedIn = await saveOAuthRecord({
+    const grantedScopes = granted.length ? granted : l.scopes;
+    const forbidden = storeForbidden(l, grantedScopes);
+    if (forbidden) {
+      await revokeQuietly(issued);
+      return finish(l, 'failed', `login not stored: ${forbidden}`);
+    }
+    const stored = await saveOAuthRecord({
       refresh_token: data.refresh_token,
-      scopes: l.grantedScopes,
+      scopes: grantedScopes,
       client_id: l.client.client_id,
       obtained_at: new Date().toISOString(),
     });
+    if (!isLive(l)) {
+      // Cancelled while the record was being written: take back exactly what we wrote.
+      const now = await loadOAuthRecord();
+      if (now?.record.refresh_token === data.refresh_token) await deleteOAuthRecord();
+      await revokeQuietly(issued);
+      return;
+    }
+    l.grantedScopes = grantedScopes;
+    l.storedIn = stored;
     finish(l, 'complete');
   } catch (e) {
     finish(l, 'failed', `login failed (${(e as Error)?.name ?? 'error'})`);
@@ -262,13 +323,15 @@ function handleCallback(l: Login, req: http.IncomingMessage, res: http.ServerRes
       `authorization refused (${/^[a-z_]{1,40}$/.test(err ?? '') ? err : 'error'})`,
     );
   }
-  completeLogin(l, code).then(() =>
+  l.exchange = completeLogin(l, code).then(() =>
     respond(
       res,
       l.status === 'complete' ? 200 : 400,
       l.status === 'complete'
         ? 'Signed in. You can close this tab.'
-        : 'Login failed. Return to the terminal or agent for details.',
+        : l.status === 'cancelled' || l.status === 'expired'
+          ? 'This login was cancelled or expired and nothing was saved. You can close this tab.'
+          : 'Login failed. Return to the terminal or agent for details.',
     ),
   );
 }
@@ -326,7 +389,12 @@ export async function startLogin(args: {
   const scopes = Array.from(new Set(names.flatMap((s) => scopesFor(s, policy.readOnly))));
   const client = requireClient();
 
-  if (current) finish(current, 'cancelled');
+  epoch++; // supersedes any login (including one already exchanging its code)
+  if (current) {
+    const old = current;
+    finish(old, 'cancelled');
+    await old.exchange; // let an in-flight save settle (and undo itself) before starting anew
+  }
 
   const state = generateState();
   const verifier = generateCodeVerifier();
@@ -334,6 +402,8 @@ export async function startLogin(args: {
   const settled = new Promise<void>((r) => (settle = r));
   const server = http.createServer();
   const login = {
+    epoch: ++epoch,
+    services: names,
     state,
     verifier,
     scopes,
@@ -354,6 +424,11 @@ export async function startLogin(args: {
   login.expiresAt = Date.now() + LOGIN_TTL_MS;
   login.timer = setTimeout(() => finish(login, 'expired', 'login timed out'), LOGIN_TTL_MS);
   login.timer.unref?.();
+  if (login.epoch !== epoch) {
+    // A logout or another startLogin ran while this listener was coming up.
+    finish(login, 'cancelled');
+    throw new Error('login was cancelled while starting');
+  }
   current = login;
 
   const authUrl = buildAuthUrl({
@@ -427,7 +502,13 @@ export interface LogoutResult {
  * (a dead network must not leave a live credential on disk).
  */
 export async function logout(): Promise<LogoutResult> {
-  if (current) finish(current, 'cancelled');
+  epoch++;
+  if (current) {
+    const l = current;
+    finish(l, 'cancelled');
+    await l.exchange; // a consumed login may be mid-save; wait so it cannot undo this logout
+  }
+  clearTokenCache();
   const stored = await loadOAuthRecord();
   const out: LogoutResult = { hadCredential: stored !== null, revoked: false, deleted: false };
   if (stored) {
@@ -440,6 +521,7 @@ export async function logout(): Promise<LogoutResult> {
     }
   }
   await deleteOAuthRecord();
+  clearTokenCache();
   out.deleted = (await loadOAuthRecord()) === null;
   return out;
 }
