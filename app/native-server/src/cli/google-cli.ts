@@ -66,6 +66,13 @@ export function parseArgs(argv: string[]): Parsed {
 const str = (f: Record<string, string | true>, k: string): string | undefined =>
   typeof f[k] === 'string' ? (f[k] as string) : undefined;
 
+function num(v: string | undefined, name: string): number | undefined {
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) throw new UsageError(`--${name} must be a non-negative number`);
+  return n;
+}
+
 function json(text: string, what: string): unknown {
   try {
     return JSON.parse(text);
@@ -128,7 +135,7 @@ export async function runCli(argv: string[], io: Io = defaultIo): Promise<number
         need(p, 2, 'call <service> <method>');
         const params = str(f, 'params');
         const body = str(f, 'body');
-        const cap = str(f, 'max-bytes');
+        const cap = num(str(f, 'max-bytes'), 'max-bytes');
         return await runTool(
           'google_api_call',
           {
@@ -137,7 +144,7 @@ export async function runCli(argv: string[], io: Io = defaultIo): Promise<number
             version: str(f, 'version'),
             ...(params !== undefined ? { params: json(params, '--params') } : {}),
             ...(body !== undefined ? { body: json(body, '--body') } : {}),
-            ...(cap !== undefined ? { maxResponseBytes: Number(cap) } : {}),
+            ...(cap !== undefined ? { maxResponseBytes: cap } : {}),
             dryRun: f.execute === true ? false : undefined,
           },
           io,
@@ -181,10 +188,10 @@ export async function runCli(argv: string[], io: Io = defaultIo): Promise<number
         );
       case 'docs-read': {
         need(p, 1, 'docs-read <documentId>');
-        const n = str(f, 'max-chars');
+        const n = num(str(f, 'max-chars'), 'max-chars');
         return await runTool(
           'google_docs_read',
-          { documentId: p[0], ...(n !== undefined ? { maxChars: Number(n) } : {}) },
+          { documentId: p[0], ...(n !== undefined ? { maxChars: n } : {}) },
           io,
         );
       }
@@ -201,7 +208,7 @@ export async function runCli(argv: string[], io: Io = defaultIo): Promise<number
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
-        const wait = Number(str(f, 'wait') ?? 300);
+        const wait = num(str(f, 'wait'), 'wait') ?? 300;
         const start = await startLogin({ services, openBrowser: f.open === true });
         io.err(`Open this URL in your browser to sign in (valid until ${start.expiresAt}):`);
         io.err(start.authUrl);
