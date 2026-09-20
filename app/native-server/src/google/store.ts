@@ -49,6 +49,12 @@ export interface GooglePolicy {
    * Off by default: helper writes are RAW, so "=IMPORTRANGE(...)" stays inert text.
    */
   allowFormulas: boolean;
+  /**
+   * Expose google_auth_login / google_auth_logout to the model. Default true. Set false to make
+   * both tools refuse, so only the operator (CLI: chrome-mcp-bridge google login|logout) can
+   * start or end a login. Login always still needs a human to approve consent in a browser.
+   */
+  allowAuthTools: boolean;
   /** Set when google-policy.json exists but cannot be trusted. Every call is then refused. */
   invalid?: string;
 }
@@ -61,6 +67,7 @@ export const DEFAULT_POLICY: GooglePolicy = {
   allowedServices: [],
   authMode: 'service-account',
   allowFormulas: false,
+  allowAuthTools: true,
 };
 
 const keyFilePath = () => path.join(getAgentDir(), 'google-sa.json');
@@ -193,7 +200,13 @@ export async function loadServiceAccountKey(): Promise<{
   }
 }
 
-const BOOLEAN_FIELDS = ['readOnly', 'allowDestructive', 'allowUnscoped', 'allowFormulas'] as const;
+const BOOLEAN_FIELDS = [
+  'readOnly',
+  'allowDestructive',
+  'allowUnscoped',
+  'allowFormulas',
+  'allowAuthTools',
+] as const;
 const LIST_FIELDS = ['allowedResourceIds', 'allowedServices'] as const;
 
 /**
@@ -232,6 +245,7 @@ export function loadPolicy(): GooglePolicy {
   return {
     authMode: (o.authMode as AuthMode | undefined) ?? 'service-account',
     allowFormulas: o.allowFormulas === true,
+    allowAuthTools: o.allowAuthTools !== false,
     readOnly: o.readOnly === true,
     allowDestructive: o.allowDestructive === true,
     allowedResourceIds: (o.allowedResourceIds as string[] | undefined) ?? [],
@@ -241,7 +255,7 @@ export function loadPolicy(): GooglePolicy {
 }
 
 function invalidPolicy(reason: string): GooglePolicy {
-  return { ...DEFAULT_POLICY, readOnly: true, invalid: reason };
+  return { ...DEFAULT_POLICY, readOnly: true, allowAuthTools: false, invalid: reason };
 }
 
 // ---------------------------------------------------------------------------------------------

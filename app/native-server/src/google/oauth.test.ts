@@ -467,6 +467,56 @@ describe('tokens and status', () => {
       /different OAuth client/,
     );
   });
+  test('a cached token is not served after the OAuth client config changes (L3)', async () => {
+    writeFile('google-oauth-client.json', CLIENT);
+    oauthPolicy();
+    await seed();
+    const sc = scopesFor('sheets', false);
+    expect(await getAccessToken(sc)).toBe('AT-refreshed');
+    expect(await getAccessToken(sc)).toBe('AT-refreshed');
+    expect(tokenCalls()).toHaveLength(1);
+    // same client_id, new secret: cache must miss and re-mint
+    writeFile('google-oauth-client.json', { ...CLIENT, client_secret: 'GOCSPX-rotated' });
+    await getAccessToken(sc);
+    expect(tokenCalls()).toHaveLength(2);
+    expect(new URLSearchParams(String(tokenCalls()[1][1].body)).get('client_secret')).toBe(
+      'GOCSPX-rotated',
+    );
+    // different client_id: refused even though a token is cached for the old one
+    writeFile('google-oauth-client.json', {
+      client_id: 'other-client-0000.apps.googleusercontent.com',
+    });
+    await expect(getAccessToken(sc)).rejects.toThrow(/different OAuth client/);
+    // client file removed: refused, not served from cache
+    fs.rmSync(path.join(agentDir(), 'google-oauth-client.json'));
+    await expect(getAccessToken(sc)).rejects.toThrow(/no OAuth client/);
+  });
+  test('logout clears cached access tokens (L3)', async () => {
+    writeFile('google-oauth-client.json', CLIENT);
+    oauthPolicy();
+    await seed();
+    const sc = scopesFor('sheets', false);
+    await getAccessToken(sc);
+    expect((await authStatus()).cachedTokens).toBe(1);
+    await logout();
+    expect((await authStatus()).cachedTokens).toBe(0);
+    await seed(); // logging back in must mint fresh, not reuse the pre-logout token
+    await getAccessToken(sc);
+    expect(tokenCalls()).toHaveLength(2);
+  });
+  test('status reports a malformed client file instead of throwing (d)', async () => {
+    writeFile('google-oauth-client.json', '{not json');
+    oauthPolicy();
+    const st: any = await authStatus();
+    expect(st.oauth.clientConfigured).toBe(false);
+    expect(st.oauth.clientFileInvalid).toMatch(/not valid JSON/);
+    expect(st.activeCredentialReady).toBe(false);
+    writeFile('google-oauth-client.json', CLIENT);
+    const ok: any = await authStatus();
+    expect(ok.oauth).toMatchObject({ clientConfigured: true, clientFileInvalid: null });
+    const viaTool: any = await handleGoogleTool('google_auth_status', {});
+    expect(viaTool.isError).toBe(false);
+  });
   test('an invalid policy blocks token issuance', async () => {
     writeFile('google-policy.json', '{bad');
     await expect(getAccessToken(scopesFor('sheets', false))).rejects.toThrow();
@@ -521,6 +571,25 @@ describe('logout', () => {
   });
   test('is a harmless no-op when nothing is stored', async () => {
     expect(await logout()).toMatchObject({ hadCredential: false, deleted: true });
+  });
+  test('policy.allowAuthTools:false makes both model-callable auth tools refuse (b)', async () => {
+    writeFile('google-oauth-client.json', CLIENT);
+    oauthPolicy({ allowAuthTools: false });
+    for (const [n, a] of [
+      ['google_auth_login', { services: ['sheets'] }],
+      ['google_auth_logout', {}],
+    ] as const) {
+      const r: any = await handleGoogleTool(n, a);
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/allowAuthTools/);
+    }
+    expect(loginStatus().state).toBe('idle');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(loadPolicy().allowAuthTools).toBe(false);
+    oauthPolicy({ allowAuthTools: 'no' });
+    expect(loadPolicy().invalid).toMatch(/allowAuthTools/);
+    oauthPolicy();
+    expect(loadPolicy().allowAuthTools).toBe(true); // default
   });
   test('google_auth_login / google_auth_logout tools', async () => {
     const denied: any = await handleGoogleTool('google_auth_login', { services: ['sheets'] });

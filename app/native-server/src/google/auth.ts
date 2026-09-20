@@ -5,7 +5,7 @@
  * There is no fallback between the two: a misconfigured mode fails loudly instead of silently
  * switching identity. Tokens are cached in memory only.
  */
-import { createSign } from 'node:crypto';
+import { createHash, createSign } from 'node:crypto';
 import { loginStatus, refreshAccessToken } from './oauth';
 import { SERVICE_SCOPES, scopesFor } from './scopes';
 import {
@@ -64,7 +64,19 @@ export async function getAccessToken(scopes: string[]): Promise<string> {
 async function getOAuthAccessToken(scopes: string[]): Promise<string> {
   const stored = await loadOAuthRecord();
   if (!stored) throw new Error('not logged in: run google_auth_login (policy.authMode is "oauth")');
-  const cacheKey = `oauth|${stored.record.client_id}|${stored.record.obtained_at}|${scopes.slice().sort().join(' ')}`;
+  // A cached token is only valid for the client config that is current NOW: a swapped or edited
+  // google-oauth-client.json must not keep serving tokens minted under the previous one.
+  const client = loadOAuthClient();
+  if (!client) throw new Error('no OAuth client configured (google-oauth-client.json)');
+  if (client.client_id !== stored.record.client_id)
+    throw new Error(
+      'stored login belongs to a different OAuth client; run google_auth_logout then google_auth_login',
+    );
+  const clientTag = createHash('sha256')
+    .update(`${client.client_id}\0${client.client_secret ?? ''}`)
+    .digest('hex')
+    .slice(0, 16);
+  const cacheKey = `oauth|${clientTag}|${stored.record.obtained_at}|${scopes.slice().sort().join(' ')}`;
   const hit = cache.get(cacheKey);
   if (hit && hit.expiresAt - 60_000 > Date.now()) return hit.token;
   const fresh = await refreshAccessToken(scopes);
@@ -113,7 +125,13 @@ export async function authStatus(): Promise<Record<string, unknown>> {
   const policy = loadPolicy();
   const sa = await loadServiceAccountKey();
   const oauthRec = await loadOAuthRecord();
-  const client = loadOAuthClient();
+  let client: ReturnType<typeof loadOAuthClient> = null;
+  let clientFileInvalid: string | null = null;
+  try {
+    client = loadOAuthClient();
+  } catch (e: any) {
+    clientFileInvalid = e?.message ?? String(e); // status must still answer on a bad client file
+  }
   return {
     authMode: policy.authMode,
     // Kept for phase 2 callers: describes the service-account credential.
@@ -129,6 +147,7 @@ export async function authStatus(): Promise<Record<string, unknown>> {
     },
     oauth: {
       clientConfigured: client !== null,
+      clientFileInvalid,
       loggedIn: oauthRec !== null,
       source: oauthRec?.source ?? null,
       grantedScopes: oauthRec?.record.scopes ?? [],

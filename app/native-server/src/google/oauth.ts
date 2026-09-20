@@ -9,9 +9,13 @@
  *  - The listener binds 127.0.0.1 on a random port, lives at most LOGIN_TTL_MS, accepts one valid
  *    callback, checks `Host` (DNS rebinding) and compares `state` in constant time. A request with a
  *    wrong state gets a 400 and does NOT end the login, so a stray page cannot cancel it.
- *  - The PKCE verifier and state never leave this module. Codes, verifiers and tokens are never
- *    logged and never appear in error text: token-endpoint failures surface only Google's
- *    `error` / `error_description` fields.
+ *  - The PKCE verifier never leaves this module. The authUrl (which carries `state` and the
+ *    `code_challenge`) IS returned by startLogin and shown to the user: it has to be, since it is
+ *    what gets opened in a browser. `state` is therefore not a secret from whoever holds the URL:
+ *    that party can end a login early with GET /callback?state=S&error=x (a denial of service, not
+ *    a token theft: without the browser-held code and the verifier nothing can be exchanged).
+ *    Codes, verifiers and tokens are never logged and never appear in error text: token-endpoint
+ *    failures surface only Google's `error` / `error_description` fields.
  *  - The refresh token goes to the Keychain (0600 file fallback); access tokens are cached in
  *    memory by auth.ts and never written anywhere.
  */

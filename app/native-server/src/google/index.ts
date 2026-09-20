@@ -3,6 +3,7 @@ import { authStatus } from './auth';
 import { googleApiCall } from './api-call';
 import { describeSchema } from './discovery';
 import { loginStatus, logout, startLogin, waitForLogin } from './oauth';
+import { loadPolicy } from './store';
 import { sheetsDocsHandlers, sheetsDocsToolSchemas } from './sheets-docs';
 
 export const googleToolSchemas: Tool[] = [
@@ -62,7 +63,7 @@ export const googleToolSchemas: Tool[] = [
   {
     name: 'google_auth_login',
     description:
-      'Start an OAuth 2.0 (PKCE, loopback) login to the operator\'s own Google account. Requires policy.authMode "oauth" and an OAuth client in google-oauth-client.json. Returns an authUrl for the user to open in a browser; the refresh token is stored in the macOS Keychain. Pass waitSeconds to block until the login completes.',
+      'Start an OAuth 2.0 (PKCE, loopback) login to the operator\'s own Google account. Requires policy.authMode "oauth" and an OAuth client in google-oauth-client.json. Returns an authUrl that the HUMAN operator must open and approve in a browser: this tool cannot grant itself access, and you must not try to complete consent for them. The refresh token is stored in the macOS Keychain. Pass waitSeconds to block until the login completes. Starting a login cancels any pending one. An operator can disable this tool with policy.allowAuthTools:false.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,7 +85,7 @@ export const googleToolSchemas: Tool[] = [
   {
     name: 'google_auth_logout',
     description:
-      'Revoke the stored OAuth refresh token at Google and delete it locally. Also cancels any pending login.',
+      "Revoke the stored OAuth refresh token at Google and delete it locally, and cancel any pending login. This ends the operator's Google session for every tool, so call it only when the user asks. An operator can disable this tool with policy.allowAuthTools:false.",
     inputSchema: { type: 'object', properties: {} },
   },
   ...sheetsDocsToolSchemas,
@@ -101,6 +102,14 @@ const asResult = (payload: unknown, isError = false): CallToolResult => ({
 export async function handleGoogleTool(name: string, args: any): Promise<CallToolResult> {
   try {
     if (name === 'google_auth_status') return asResult(await authStatus());
+    if (
+      (name === 'google_auth_login' || name === 'google_auth_logout') &&
+      !loadPolicy().allowAuthTools
+    ) {
+      throw new Error(
+        `${name} is disabled by policy.allowAuthTools:false; the operator must use the chrome-mcp-google CLI`,
+      );
+    }
     if (name === 'google_auth_login') {
       const start = await startLogin({ services: args?.services, openBrowser: args?.openBrowser });
       const wait =
