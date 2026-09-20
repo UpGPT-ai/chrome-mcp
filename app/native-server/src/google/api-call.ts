@@ -199,6 +199,24 @@ export function buildRequest(
 }
 
 /**
+ * Split a pasteData `data` string into the cells Sheets will parse. Splits on the request's
+ * delimiter (default ","), on every line break and on tab, and, for html pastes, on tag
+ * boundaries. Quoted cells are NOT honoured: a delimiter inside quotes still starts a new "cell"
+ * here, which can only produce extra candidates (we err on the side of blocking).
+ */
+export function splitPasteCells(data: string, delimiter: string, html: boolean): string[] {
+  const parts: string[] = [data];
+  const seps = ['\r', '\n', ' ', ' ', '\u0085', '\v', '\f', '\t', delimiter || ','];
+  if (html) seps.push('<', '>');
+  let cells = parts;
+  for (const sep of seps) {
+    if (!sep) continue;
+    cells = cells.flatMap((c) => c.split(sep));
+  }
+  return cells;
+}
+
+/**
  * Formula channels in a Sheets write that bypass the helpers: values.update/append/batchUpdate with
  * valueInputOption USER_ENTERED, batchUpdate updateCells/repeatCell with userEnteredValue
  * .formulaValue, pasteData and findReplace replacements. Returns a refusal reason or null.
@@ -216,14 +234,26 @@ export function sheetsFormulaReason(
     /* url was built by buildRequest; unparsable means no query to inspect */
   }
   const formulaValues: string[] = [];
-  const pasted: string[] = [];
+  /** Every text a Sheets write can hand to the formula parser as a whole (dangerous-fn check applies). */
+  const wholeTexts: string[] = [];
+  /** Individual cells of pasteData / replacement / condition text (formula-trigger check applies). */
+  const cellTexts: string[] = [];
   const strings: string[] = [];
   let tooDeep = false;
   const walk = (node: unknown, depth: number, key: string): void => {
     if (typeof node === 'string') {
       strings.push(node);
       if (key === 'formulaValue') formulaValues.push(node);
-      if (key === 'data' || key === 'replacement') pasted.push(node);
+      else if (key === 'replacement' || key === 'userEnteredValue' || key === 'formula') {
+        // replacement text, ConditionValue.userEnteredValue (data validation, conditional format,
+        // filter criteria) and data-source calculated-column formulas are parsed as formulas.
+        wholeTexts.push(node);
+        cellTexts.push(node);
+      } else if (key === 'data') {
+        // A bare `data` string outside a pasteData object; still split conservatively.
+        wholeTexts.push(node);
+        cellTexts.push(...splitPasteCells(node, '', false));
+      }
       return;
     }
     if (node === null || typeof node !== 'object') {
@@ -238,11 +268,26 @@ export function sheetsFormulaReason(
       node.forEach((n) => walk(n, depth + 1, key));
       return;
     }
-    for (const [rawKey, v] of Object.entries(node as Record<string, unknown>)) {
+    const obj = node as Record<string, unknown>;
+    let delimiter = '';
+    let html = false;
+    for (const [rawKey, v] of Object.entries(obj)) {
+      const k = camelKey(rawKey);
+      if (k === 'delimiter' && typeof v === 'string') delimiter = v;
+      if (k === 'html' && v) html = true;
+    }
+    for (const [rawKey, v] of Object.entries(obj)) {
       const k = camelKey(rawKey);
       if (k === 'valueInputOption' && typeof v === 'string' && v.toUpperCase() === 'USER_ENTERED')
         userEntered = true;
       if (k === 'formulaValue' && typeof v !== 'string') formulaValues.push('=');
+      if (k === 'data' && typeof v === 'string') {
+        // pasteData: `data` is a whole delimited grid. Test EVERY cell, not just the start.
+        strings.push(v);
+        wholeTexts.push(v);
+        cellTexts.push(...splitPasteCells(v, delimiter, html));
+        continue;
+      }
       walk(v, depth + 1, k);
     }
   };
@@ -257,12 +302,13 @@ export function sheetsFormulaReason(
     if (formulaValues.some(hasDangerousFunction)) return `a formulaValue ${dangerous}`;
   }
   const formulaLike = (s: string): boolean => FORMULA_TRIGGER.test(s);
-  if (pasted.some(formulaLike)) {
-    if (!policy.allowFormulas)
-      return 'body pastes/replaces with formula-like text; set "allowFormulas": true in google-policy.json to permit formulas';
-    if (pasted.some((s) => formulaLike(s) && hasDangerousFunction(s)))
-      return `pasted text ${dangerous}`;
-  }
+  // Unconditional: text handed to the parser whole (pasted grids, replacements, condition values)
+  // must never call a blocked function, whatever allowFormulas says and wherever in the string the
+  // formula sits (after a delimiter, a newline, a tab...).
+  if (wholeTexts.some(hasDangerousFunction))
+    return `pasted/replacement/condition text ${dangerous}`;
+  if (cellTexts.some(formulaLike) && !policy.allowFormulas)
+    return 'body pastes/replaces/validates with formula-like text (a cell beginning with = + - @); set "allowFormulas": true in google-policy.json to permit formulas';
   if (userEntered) {
     const cells = strings.filter(formulaLike);
     if (cells.length) {

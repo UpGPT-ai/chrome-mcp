@@ -590,6 +590,143 @@ describe('formula gates (M1, M2, M3, M4, L5)', () => {
   });
 });
 
+describe('formula gates: pasteData, replacement and condition channels', () => {
+  const batch = (request: object) =>
+    call('google_api_call', {
+      service: 'sheets',
+      method: 'spreadsheets.batchUpdate',
+      params: { spreadsheetId: SID },
+      body: { requests: [request] },
+      dryRun: false,
+    });
+  const paste = (data: string, extra: object = {}) =>
+    batch({ pasteData: { coordinate: { sheetId: 0 }, data, type: 'PASTE_VALUES', ...extra } });
+
+  test('pasteData: a formula in ANY cell (after a delimiter or newline) is refused by default', async () => {
+    for (const data of [
+      'a,=1+1',
+      'a\n=1+1',
+      'a\r\n=1+1',
+      'ok\n\n-5',
+      'a,b\nc,=SUM(A1:A2)',
+      'a\t=1+1',
+      '"q",@x',
+    ])
+      expect(await paste(data)).toMatchObject({
+        blocked: true,
+        reason: expect.stringMatching(/allowFormulas/),
+      });
+    // custom delimiter is honoured
+    expect(await paste('a|=1+1', { delimiter: '|' })).toMatchObject({ blocked: true });
+    expect(await paste('a;=1+1', { delimiter: ';' })).toMatchObject({ blocked: true });
+    // html pastes are split on tag boundaries
+    expect(await paste('<table><tr><td>=1+1</td></tr></table>', { html: true })).toMatchObject({
+      blocked: true,
+    });
+    expect(apiCalls()).toHaveLength(0);
+    expect((await paste('plain,text\nmore,text')).ok).toBe(true);
+  });
+  test('pasteData: blocked functions are refused even mid-string and even with allowFormulas', async () => {
+    for (const data of [
+      'a,=IMPORTDATA("http://e/x")',
+      'a\t=IMPORTDATA("http://e/x")',
+      'a\n=IMAGE("http://e/x")',
+      'x =HYPERLINK("http://e","y")',
+    ])
+      expect(await paste(data)).toMatchObject({
+        blocked: true,
+        reason: expect.stringMatching(/blocked function/),
+      });
+    writePolicy({ allowFormulas: true });
+    for (const data of ['a,=IMPORTDATA("http://e/x")', 'a\n=IMAGE("u")', 'a\t=WEBSERVICE("u")'])
+      expect(await paste(data)).toMatchObject({
+        blocked: true,
+        reason: expect.stringMatching(/blocked function/),
+      });
+    expect((await paste('a,=SUM(A1:A2)\n=1+1')).ok).toBe(true);
+    expect(apiCalls()).toHaveLength(1);
+  });
+  test('findReplace replacement: blocked functions are refused unconditionally', async () => {
+    const fr = (replacement: string) => batch({ findReplace: { find: 'x', replacement } });
+    expect(await fr('=IMPORTDATA("http://e/x")')).toMatchObject({
+      blocked: true,
+      reason: expect.stringMatching(/blocked function/),
+    });
+    expect(await fr('see =IMAGE("u")')).toMatchObject({ blocked: true });
+    expect(await fr('=A1+1')).toMatchObject({
+      blocked: true,
+      reason: expect.stringMatching(/allowFormulas/),
+    });
+    writePolicy({ allowFormulas: true });
+    expect(await fr('=IMPORTDATA("http://e/x")')).toMatchObject({ blocked: true });
+    expect(await fr('x =IMAGE("u")')).toMatchObject({ blocked: true });
+    expect((await fr('=A1+1')).ok).toBe(true);
+    expect((await fr('plain')).ok).toBe(true);
+  });
+  test('data validation / conditional format / filter condition values are gated', async () => {
+    const dv = (v: string) =>
+      batch({
+        setDataValidation: {
+          range: { sheetId: 0 },
+          rule: { condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: v }] } },
+        },
+      });
+    const cf = (kind: string, v: string) =>
+      batch({
+        [kind]: {
+          rule: {
+            ranges: [{ sheetId: 0 }],
+            booleanRule: {
+              condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: v }] },
+              format: {},
+            },
+          },
+          index: 0,
+        },
+      });
+    const snake = batch({
+      add_conditional_format_rule: {
+        rule: {
+          boolean_rule: { condition: { values: [{ user_entered_value: '=IMPORTDATA("u")' }] } },
+        },
+      },
+    });
+    for (const p of [
+      dv('=A1>0'),
+      cf('addConditionalFormatRule', '=A1>0'),
+      cf('updateConditionalFormatRule', '=A1>0'),
+    ])
+      expect(await p).toMatchObject({
+        blocked: true,
+        reason: expect.stringMatching(/allowFormulas/),
+      });
+    expect(await dv('=IMPORTDATA("http://e/x")')).toMatchObject({
+      blocked: true,
+      reason: expect.stringMatching(/blocked function/),
+    });
+    expect(await snake).toMatchObject({ blocked: true });
+    writePolicy({ allowFormulas: true });
+    expect(await dv('=IMPORTRANGE("a","b")')).toMatchObject({ blocked: true });
+    expect(await cf('addConditionalFormatRule', '=IMAGE("u")')).toMatchObject({ blocked: true });
+    expect(await cf('updateConditionalFormatRule', '=HYPERLINK("u")')).toMatchObject({
+      blocked: true,
+    });
+    expect((await dv('=A1>0')).ok).toBe(true);
+    // a non-formula condition value (e.g. a number or text) is not a formula channel
+    writePolicy({});
+    expect((await dv('10')).ok).toBe(true);
+  });
+  test('ExtendedValue.stringValue stays a literal and is not treated as a formula channel', async () => {
+    const r = await batch({
+      updateCells: {
+        rows: [{ values: [{ userEnteredValue: { stringValue: '=1+1' } }] }],
+        fields: '*',
+      },
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('google_sheets_ensure_tab', () => {
   test('is a no-op when the tab exists (case-insensitive)', async () => {
     const r = await call('google_sheets_ensure_tab', {
