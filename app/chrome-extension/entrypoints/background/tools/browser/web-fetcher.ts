@@ -11,6 +11,76 @@ interface WebFetcherToolParams {
   tabId?: number; // target existing tab id
   background?: boolean; // do not activate/focus
   windowId?: number; // target window id to pick active tab or create tab
+  reuseTab?: boolean; // reuse ONE dedicated tab, navigating it in place (no tab/window explosion)
+}
+
+// A single dedicated tab reused across every `reuseTab: true` fetch. Module-level
+// so it survives across tool calls within one service-worker lifetime. When the
+// worker is evicted and respawned this resets to null and we re-adopt/create one
+// tab on the next call — still at most one tab, never an accumulating pile.
+let reusableTabId: number | null = null;
+
+/**
+ * Navigate the shared reusable tab to `url` and resolve once it finishes loading.
+ * Creates the dedicated tab on first use (or if the previous one was closed).
+ * Uses chrome.tabs.onUpdated (status 'complete') rather than a fixed timeout so
+ * we read the page only after it has actually rendered.
+ */
+async function navigateReusableTab(url: string, background: boolean): Promise<chrome.tabs.Tab> {
+  // Adopt the existing dedicated tab if it's still alive.
+  let tab: chrome.tabs.Tab | undefined;
+  if (reusableTabId !== null) {
+    try {
+      tab = await chrome.tabs.get(reusableTabId);
+    } catch {
+      reusableTabId = null; // it was closed — fall through to create a fresh one
+    }
+  }
+
+  if (!tab) {
+    tab = await chrome.tabs.create({ url, active: !background });
+    reusableTabId = tab.id ?? null;
+    if (tab.id == null) return tab;
+    await waitForTabComplete(tab.id, url);
+    return chrome.tabs.get(tab.id);
+  }
+
+  // Navigate the existing dedicated tab in place.
+  const tabId = tab.id!;
+  await chrome.tabs.update(tabId, { url, active: !background });
+  await waitForTabComplete(tabId, url);
+  return chrome.tabs.get(tabId);
+}
+
+/** Resolve when `tabId` reaches status 'complete', with a hard timeout fallback. */
+function waitForTabComplete(tabId: number, url: string, timeoutMs = 30000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
+      // Brief settle for late client-side rendering after 'complete'.
+      setTimeout(resolve, 400);
+    };
+
+    const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') done();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+
+    // Fallback: if 'complete' never fires (hung load, blank navigation), don't hang.
+    // The listener is attached synchronously after the update()/create() await, before
+    // the freshly-navigated page can reach 'complete', so we don't miss the event.
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      console.warn(`Reusable-tab load timed out after ${timeoutMs}ms for ${url}`);
+      resolve();
+    }, timeoutMs);
+  });
 }
 
 class WebFetcherTool extends BaseBrowserToolExecutor {
@@ -28,6 +98,7 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
     const explicitTabId = args.tabId;
     const background = args.background === true;
     const windowId = args.windowId;
+    const reuseTab = args.reuseTab === true;
 
     console.log(`Starting web fetcher with options:`, {
       htmlContent,
@@ -40,7 +111,11 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
       // Get tab to fetch content from
       let tab;
 
-      if (typeof explicitTabId === 'number') {
+      if (reuseTab && url) {
+        // Single-tab mode: navigate ONE dedicated tab in place. Never spawns a
+        // tab per URL, so a long harvest crawl stays at exactly one open tab.
+        tab = await navigateReusableTab(url, background);
+      } else if (typeof explicitTabId === 'number') {
         tab = await chrome.tabs.get(explicitTabId);
       } else if (url) {
         // If URL is provided, check if it's already open

@@ -537,6 +537,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Target an existing tab by ID (default: active tab).',
         },
+        reuseTab: {
+          type: 'boolean',
+          description:
+            'Reuse ONE dedicated tab, navigating it in place for each url instead of opening a new tab. Use for multi-page crawls to avoid opening many tabs (default: false).',
+        },
         background: {
           type: 'boolean',
           description: 'Do not activate tab/focus window while fetching (default: false)',
