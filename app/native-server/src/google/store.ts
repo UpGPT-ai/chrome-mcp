@@ -140,8 +140,21 @@ function keychainDelete(account: string): Promise<boolean> {
 
 function fileWrite(secret: string, file: string = keyFilePath()): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, secret, { mode: 0o600 });
-  fs.chmodSync(file, 0o600);
+  // Created 0600 from the first byte (no window where the secret is world-readable),
+  // then renamed over the target so a reader never sees a partial file either.
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(tmp, 'wx', 0o600);
+    fs.writeFileSync(fd, secret);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    if (fd !== undefined) fs.closeSync(fd);
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 /** Stores a validated key. Returns where it landed. */
@@ -152,6 +165,8 @@ export async function saveServiceAccountKey(raw: string): Promise<KeySource> {
     const back = await keychainRead();
     if (back === raw) return 'keychain';
   }
+  // Keychain is read first, so an older entry left there would shadow the new file.
+  if (useKeychain()) await keychainDelete(KEYCHAIN_ACCOUNT);
   fileWrite(raw);
   return 'file';
 }
@@ -320,6 +335,8 @@ export async function saveOAuthRecord(rec: OAuthRecord): Promise<KeySource> {
       return 'keychain';
     }
   }
+  // Keychain is read first: a stale entry (old refresh token) would shadow the new file.
+  if (useKeychain()) await keychainDelete(KEYCHAIN_OAUTH_ACCOUNT);
   fileWrite(raw, oauthFilePath());
   return 'file';
 }
