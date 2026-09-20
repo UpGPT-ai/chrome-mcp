@@ -126,7 +126,13 @@ are keyed to the current OAuth client id and secret and are dropped on logout or
 `google_auth_status` reports `oauth.clientFileInvalid` when `google-oauth-client.json` is malformed. Google errors are reduced to their `error` and `error_description` fields.
 
 `google_auth_logout` revokes the refresh token at `oauth2.googleapis.com/revoke` and deletes it locally even if the
-revoke request fails (the result says which). To remove access completely also remove the app at
+revoke request fails (the result says which). Logout and starting a new login cancel promptly: they do not wait for a
+token exchange that is still in flight (up to the 30 second request timeout). Nothing is saved after a cancel, and
+if Google does issue a token for the cancelled exchange, it is revoked in the background as soon as it arrives. The
+one case that cannot be covered is a token Google issued that this process never received. If the local save
+finds the policy tightened meanwhile, the record is deleted again and the token revoked. A stale Keychain entry
+that cannot be deleted makes save and logout fail with a clear message rather than silently shadowing the new
+file. To remove access completely also remove the app at
 myaccount.google.com/permissions.
 
 ## CLI: `chrome-mcp-google`
@@ -170,17 +176,24 @@ file that fails structural validation is discarded and refetched.
   `findReplace`, `values.update`, Docs `replaceAllText`, and `drive.files.watch`. Use `readOnly` or a resource
   allowlist when overwrites matter.
 - **Formula channels.** A cell value such as `=IMPORTRANGE(...)` or `=IMAGE(...)` can move data to another
-  spreadsheet or a remote URL. On `google_api_call` (Sheets writes) the gate now refuses, unless
+  spreadsheet or a remote URL. On `google_api_call` (Sheets writes) the gate refuses, unless
   `policy.allowFormulas` is true: `valueInputOption=USER_ENTERED` (query or body) with formula-like cells, any
-  `formulaValue` (`updateCells`, `repeatCell`, ... camelCase or snake_case), and formula-like `pasteData` /
-  `findReplace` text. Plain `USER_ENTERED` values with no formula-like string are still allowed. Even with
-  `allowFormulas` true, cells calling a blocked function are refused. `google_sheets_*` helpers apply the same scan.
+  `formulaValue` (`updateCells`, `repeatCell`, ... camelCase or snake_case), formula-like `pasteData` text,
+  formula-like `findReplace` `replacement` text, and formula-like `userEnteredValue` in `setDataValidation`
+  (`condition.values`) and `addConditionalFormatRule` / `updateConditionalFormatRule`
+  (`booleanRule.condition.values`). `pasteData` is checked cell by cell: the text is split on the request's `delimiter` (default comma), on tabs, newlines, carriage returns and other line/paragraph separators, and, for `html: true`, on tags, and every cell is tested. Quoting is not honoured, so a quoted cell that contains a
+  delimiter is split too; this can only over-block. Plain `USER_ENTERED` values with no formula-like string are
+  still allowed.
+- **Blocked functions are refused even with `allowFormulas` true**, and are searched for anywhere in the whole
+  pasted / replacement / condition string, not only at the start of a cell. `google_sheets_*` helpers apply the
+  same scan to their cells.
 - **Helper formula scan is a heuristic.** A string is formula-like when, after stripping whitespace, control,
   format and separator characters (U+200B, U+2060, U+0085, BOM, ...) and leading quotes, it starts with `= + - @`.
   Blocked functions: `IMPORT*`, `IMAGE`, `HYPERLINK`, `AI`, `GOOGLEFINANCE`, `WEBSERVICE`, `CUBE*` and `QUERY` with
   an `http(s):` / `//` URL, matched case-insensitively, tolerating whitespace before `(` and a sheet prefix.
-  It does not evaluate formulas. **Residual limit:** a spreadsheet's own Apps Script custom function
-  (`=MYFUNC(...)`) or a named function that wraps a blocked one cannot be recognised, and a parsed (`userEntered`)
+  It does not evaluate formulas. **Known limits:** a spreadsheet's own Apps Script custom function
+  (`=MYFUNC(...)`), a named function that wraps a blocked one, and localized function names (a spreadsheet in
+  another locale can spell `IMPORTDATA` differently) cannot be recognised; and a parsed (`userEntered`)
   numeric-looking or date-looking string is still interpreted by Sheets. Keep `allowFormulas` off, or use
   `readOnly` / `allowedResourceIds`, when this matters.
 - **`insertDataOption: OVERWRITE`** on `google_sheets_append` replaces existing cells and needs `overwrite:true`
