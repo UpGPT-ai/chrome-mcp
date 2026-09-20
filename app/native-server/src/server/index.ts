@@ -30,6 +30,7 @@ import { CodexEngine } from '../agent/engines/codex';
 import { ClaudeEngine } from '../agent/engines/claude';
 import { closeDb } from '../agent/db';
 import { registerAgentRoutes } from './routes';
+import { isAllowedOrigin, registerLocalAuth } from '../security/local-auth';
 
 // ============================================================
 // Types
@@ -59,6 +60,8 @@ export class Server {
       engines: [new CodexEngine(), new ClaudeEngine()],
       streamManager: this.agentStreamManager,
     });
+    // Must be registered before any route so the guard covers all of them.
+    registerLocalAuth(this.fastify);
     this.setupPlugins();
     this.setupRoutes();
   }
@@ -72,17 +75,9 @@ export class Server {
 
   private async setupPlugins(): Promise<void> {
     await this.fastify.register(cors, {
-      origin: (origin, cb) => {
-        // Allow requests with no origin (e.g., curl, server-to-server)
-        if (!origin) {
-          return cb(null, true);
-        }
-        // Check if origin matches any pattern in whitelist
-        const allowed = SERVER_CONFIG.CORS_ORIGIN.some((pattern) =>
-          pattern instanceof RegExp ? pattern.test(origin) : origin.startsWith(pattern),
-        );
-        cb(null, allowed);
-      },
+      // Exact-match allowlist (extension origins + loopback). The previous startsWith() check
+      // also accepted http://127.0.0.1.evil.com.
+      origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
       methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
       credentials: true,
     });

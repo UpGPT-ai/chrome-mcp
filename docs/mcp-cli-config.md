@@ -7,6 +7,11 @@ This guide explains how to configure Codex CLI and Claude Code to connect to the
 The Chrome MCP Server exposes its MCP interface at `http://127.0.0.1:12306/mcp` (default port).
 Both Codex CLI and Claude Code can connect to this endpoint to use Chrome browser control tools.
 
+> **Authentication.** `/mcp`, `/sse` and `/messages` require a bearer token. The bridge creates it on
+> first start at `~/.chrome-mcp-agent/auth-token` (mode 0600). Send it as
+> `Authorization: Bearer <token>`. Requests with a non-loopback `Host` header or a foreign `Origin`
+> are rejected regardless of the token. See [google-workspace.md](google-workspace.md) for the full model.
+
 ## Codex CLI Configuration
 
 ### Option 1: HTTP MCP Server (Recommended)
@@ -17,7 +22,8 @@ Add the following to your `~/.codex/config.json`:
 {
   "mcpServers": {
     "chrome-mcp": {
-      "url": "http://127.0.0.1:12306/mcp"
+      "url": "http://127.0.0.1:12306/mcp",
+      "headers": { "Authorization": "Bearer <contents of ~/.chrome-mcp-agent/auth-token>" }
     }
   }
 }
@@ -41,7 +47,8 @@ Add the following to your `~/.claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "chrome-mcp": {
-      "url": "http://127.0.0.1:12306/mcp"
+      "url": "http://127.0.0.1:12306/mcp",
+      "headers": { "Authorization": "Bearer <contents of ~/.chrome-mcp-agent/auth-token>" }
     }
   }
 }

@@ -5,6 +5,7 @@ import type { AgentMessage, RealtimeEvent } from '../types';
 import { detectCcr, validateCcrConfig } from '../ccr-detector';
 import { getProject } from '../project-service';
 import { getChromeMcpUrl } from '../../constant';
+import { authHeaders } from '../../security/local-auth';
 
 // Images are provided to Claude Code via local file paths referenced in the prompt text.
 // Claude Code CLI reads images from local paths, so we write base64 images to temp files and reference them.
@@ -740,6 +741,7 @@ export class ClaudeEngine implements AgentEngine {
           [CHROME_MCP_SERVER_NAME]: {
             type: 'http',
             url: getChromeMcpUrl(),
+            headers: authHeaders(),
           },
         };
         console.error(`[ClaudeEngine] Chrome MCP server enabled: ${getChromeMcpUrl()}`);

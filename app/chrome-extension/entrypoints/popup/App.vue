@@ -538,6 +538,8 @@ const mcpConfigJson = computed(() => {
       'streamable-mcp-server': {
         type: 'streamable-http',
         url: `http://127.0.0.1:${port}/mcp`,
+        // The bridge requires this token. Paste the contents of ~/.chrome-mcp-agent/auth-token.
+        headers: { Authorization: 'Bearer <contents of ~/.chrome-mcp-agent/auth-token>' },
       },
     },
   };

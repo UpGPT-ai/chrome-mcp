@@ -177,6 +177,14 @@ async function openDocs(): Promise<void> {
               </div>
 
               <p class="welcome-subtle text-xs mt-3">
+                The bridge now requires a bearer token. Add the header
+                <code
+                  >Authorization: Bearer &lt;contents of ~/.chrome-mcp-agent/auth-token&gt;</code
+                >
+                to your MCP client config.
+              </p>
+
+              <p class="welcome-subtle text-xs mt-3">
                 Tip: You can also open the extension popup and click "Connect" to copy a full client
                 config snippet.
               </p>
