@@ -19,9 +19,11 @@ import {
   logout,
   refreshAccessToken,
   resetLoginForTests,
+  settleRevokesForTests,
   startLogin,
   waitForLogin,
 } from './oauth';
+import * as storeMod from './store';
 import { handleGoogleTool } from './index';
 import { scopesCovered, scopesFor } from './scopes';
 import {
@@ -365,6 +367,7 @@ describe('login racing with logout / replacement / expiry (H1)', () => {
     expect(r.status).toBe(400);
     expect(await loadOAuthRecord()).toBeNull();
     expect(loginStatus().state).toBe('cancelled');
+    await settleRevokesForTests();
     expect(revoked().length).toBeGreaterThan(0);
   });
   test('startLogin replacing a login mid-exchange: the old exchange saves nothing', async () => {
@@ -405,7 +408,100 @@ describe('login racing with logout / replacement / expiry (H1)', () => {
     expect(r.status).toBe(400);
     expect(await loadOAuthRecord()).toBeNull();
     expect(loginStatus()).toMatchObject({ state: 'failed' });
+    await settleRevokesForTests();
     expect(revoked().length).toBeGreaterThan(0);
+  });
+  test('logout does not wait for a hung token endpoint; the late token is still revoked', async () => {
+    const { held, page } = await beginExchange();
+    // The exchange is still held open: logout must return anyway.
+    const out = await Promise.race([
+      logout(),
+      new Promise((r) => setTimeout(() => r('HUNG'), 1500)),
+    ]);
+    expect(out).not.toBe('HUNG');
+    expect(loginStatus().state).toBe('cancelled');
+    expect(await loadOAuthRecord()).toBeNull();
+    held.release(); // Google answers after the cancel and issues a token
+    const r = await page;
+    expect(r.body).not.toMatch(/Signed in/);
+    await new Promise((r2) => setTimeout(r2, 50));
+    await settleRevokesForTests();
+    expect(await loadOAuthRecord()).toBeNull();
+    const tokens = revoked().map((c) => new URLSearchParams(String(c[1].body)).get('token'));
+    expect(tokens).toContain('RT-secret-value');
+  });
+  test('startLogin replacing a login does not wait for a hung token endpoint', async () => {
+    const { held, page } = await beginExchange();
+    const s2 = await Promise.race([
+      startLogin({ services: ['sheets'] }),
+      new Promise<'HUNG'>((r) => setTimeout(() => r('HUNG'), 1500)),
+    ]);
+    expect(s2).not.toBe('HUNG');
+    held.release();
+    await page;
+    await new Promise((r2) => setTimeout(r2, 50));
+    await settleRevokesForTests();
+    expect(await loadOAuthRecord()).toBeNull();
+    expect(loginStatus().state).toBe('waiting');
+  });
+  test('cancel during the save whose cleanup throws still revokes the issued token (5)', async () => {
+    const { held, page } = await beginExchange();
+    const realSave = storeMod.saveOAuthRecord;
+    const saveSpy = jest.spyOn(storeMod, 'saveOAuthRecord').mockImplementation(async (rec) => {
+      const where = await realSave(rec);
+      resetLoginForTests(); // cancelled while the record was being written
+      return where;
+    });
+    const loadSpy = jest.spyOn(storeMod, 'loadOAuthRecord').mockRejectedValue(new Error('boom'));
+    try {
+      held.release();
+      await page;
+      await settleRevokesForTests();
+      expect(revoked().map((c) => new URLSearchParams(String(c[1].body)).get('token'))).toContain(
+        'RT-secret-value',
+      );
+    } finally {
+      saveSpy.mockRestore();
+      loadSpy.mockRestore();
+    }
+  });
+  test('a failure after the token was issued and saved deletes the record and revokes (5)', async () => {
+    const { held, page } = await beginExchange();
+    const realSave = storeMod.saveOAuthRecord;
+    const saveSpy = jest.spyOn(storeMod, 'saveOAuthRecord').mockImplementation(async (rec) => {
+      await realSave(rec);
+      throw new Error('keychain went away');
+    });
+    try {
+      held.release();
+      const r = await page;
+      expect(r.status).toBe(400);
+      await settleRevokesForTests();
+      expect(revoked().length).toBeGreaterThan(0);
+      expect(await loadOAuthRecord()).toBeNull();
+    } finally {
+      saveSpy.mockRestore();
+    }
+  });
+  test('policy tightened while the record was being written: it is deleted and revoked (6)', async () => {
+    const { held, page } = await beginExchange();
+    const realSave = storeMod.saveOAuthRecord;
+    const saveSpy = jest.spyOn(storeMod, 'saveOAuthRecord').mockImplementation(async (rec) => {
+      const where = await realSave(rec);
+      oauthPolicy({ readOnly: true }); // tightened after the pre-save check
+      return where;
+    });
+    try {
+      held.release();
+      const r = await page;
+      expect(r.status).toBe(400);
+      expect(loginStatus()).toMatchObject({ state: 'failed' });
+      await settleRevokesForTests();
+      expect(await loadOAuthRecord()).toBeNull();
+      expect(revoked().length).toBeGreaterThan(0);
+    } finally {
+      saveSpy.mockRestore();
+    }
   });
   test('an uncontested login still completes after the same hold', async () => {
     const { held, page } = await beginExchange();

@@ -169,6 +169,8 @@ interface Login {
   services: string[];
   /** The in-flight code exchange + save, so logout / a replacing login can wait for it. */
   exchange?: Promise<void>;
+  /** Aborted by finish(): logout / replace / expiry stop waiting on the token endpoint at once. */
+  abort: AbortController;
   state: string;
   verifier: string;
   scopes: string[];
@@ -212,6 +214,7 @@ function finish(l: Login, status: LoginState, error?: string): void {
   if (l.status !== 'waiting') return;
   l.status = status;
   l.error = error;
+  l.abort.abort(); // an in-flight exchange stops being awaited (see raceCancel)
   clearTimeout(l.timer);
   l.server.close(); // stop listening now
   // Let an in-flight response (the success/failure page) drain before dropping stragglers.
@@ -229,6 +232,62 @@ async function revokeQuietly(token: string | undefined): Promise<void> {
     /* nothing more can be done; the token is never stored */
   }
 }
+
+/**
+ * Revocations of tokens issued to a login nobody is waiting for any more. They run detached so a
+ * cancel (logout / replace) never waits on the network for them; tests await them via
+ * settleRevokesForTests().
+ */
+const pendingRevokes = new Set<Promise<void>>();
+function revokeDetached(token: string | undefined): void {
+  if (!token) return;
+  const p: Promise<void> = revokeQuietly(token).finally(() => pendingRevokes.delete(p));
+  pendingRevokes.add(p);
+}
+/** Test hook: wait for every detached revocation started so far. */
+export async function settleRevokesForTests(): Promise<void> {
+  await Promise.all(Array.from(pendingRevokes));
+}
+
+const CANCELLED = Symbol('cancelled');
+
+/**
+ * Awaits `p` unless the login is cancelled first. The underlying request is deliberately NOT
+ * aborted: if Google does answer after the cancel, `late` receives the answer so an issued token
+ * can still be revoked (an aborted request would drop it and leave a live grant nobody holds).
+ */
+function raceCancel<T>(
+  l: Login,
+  p: Promise<T>,
+  late: (v: T) => unknown,
+): Promise<T | typeof CANCELLED> {
+  const sig = l.abort.signal;
+  const handleLate = () => void p.then(late, () => undefined);
+  if (sig.aborted) {
+    handleLate();
+    return Promise.resolve(CANCELLED);
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      handleLate();
+      resolve(CANCELLED);
+    };
+    sig.addEventListener('abort', onAbort, { once: true });
+    p.then(
+      (v) => {
+        sig.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e) => {
+        sig.removeEventListener('abort', onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
+const tokenOf = (d: TokenResponse | null | undefined): string | undefined =>
+  d?.refresh_token ?? d?.access_token;
 
 /** Why a freshly obtained grant may not be stored under the CURRENT policy, or null. */
 function storeForbidden(l: Login, granted: string[]): string | null {
@@ -250,25 +309,42 @@ function storeForbidden(l: Login, granted: string[]): string | null {
 const isLive = (l: Login): boolean => l.status === 'waiting' && l.epoch === epoch;
 
 async function completeLogin(l: Login, code: string): Promise<void> {
-  // Every await below is followed by an isLive check: a login that was cancelled, replaced, logged
-  // out or expired while the exchange was in flight must never reach saveOAuthRecord.
+  // Every await below is followed by a liveness check: a login that was cancelled, replaced, logged
+  // out or expired while the exchange was in flight must never reach saveOAuthRecord, and a cancel
+  // does not wait for the token endpoint (raceCancel).
   let issued: string | undefined;
+  let saveAttempted = false; // a throwing save may still have written the record
   try {
-    const res = await postForm(GOOGLE_TOKEN_URL, {
-      grant_type: 'authorization_code',
-      code,
-      code_verifier: l.verifier,
-      redirect_uri: l.redirectUri,
-      client_id: l.client.client_id,
-      ...(l.client.client_secret ? { client_secret: l.client.client_secret } : {}),
-    });
+    const res = await raceCancel(
+      l,
+      postForm(GOOGLE_TOKEN_URL, {
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: l.verifier,
+        redirect_uri: l.redirectUri,
+        client_id: l.client.client_id,
+        ...(l.client.client_secret ? { client_secret: l.client.client_secret } : {}),
+      }),
+      async (late) => {
+        if (!late.ok) return;
+        try {
+          revokeDetached(tokenOf((await late.json()) as TokenResponse));
+        } catch {
+          /* unreadable body: nothing to revoke */
+        }
+      },
+    );
+    if (res === CANCELLED) return;
     if (!res.ok) {
       const why = await describeFailure(res);
       return finish(l, 'failed', `token exchange failed (${why})`);
     }
-    const data = (await res.json()) as TokenResponse;
-    issued = data.refresh_token ?? data.access_token;
-    if (!isLive(l)) return void (await revokeQuietly(issued));
+    const data = await raceCancel(l, res.json() as Promise<TokenResponse>, (d) =>
+      revokeDetached(tokenOf(d)),
+    );
+    if (data === CANCELLED) return;
+    issued = tokenOf(data);
+    if (!isLive(l)) return revokeDetached(issued);
     if (!data.refresh_token)
       return finish(
         l,
@@ -279,28 +355,47 @@ async function completeLogin(l: Login, code: string): Promise<void> {
     const grantedScopes = granted.length ? granted : l.scopes;
     const forbidden = storeForbidden(l, grantedScopes);
     if (forbidden) {
-      await revokeQuietly(issued);
+      revokeDetached(issued);
       return finish(l, 'failed', `login not stored: ${forbidden}`);
     }
+    saveAttempted = true;
     const stored = await saveOAuthRecord({
       refresh_token: data.refresh_token,
       scopes: grantedScopes,
       client_id: l.client.client_id,
       obtained_at: new Date().toISOString(),
     });
-    if (!isLive(l)) {
-      // Cancelled while the record was being written: take back exactly what we wrote.
-      const now = await loadOAuthRecord();
-      if (now?.record.refresh_token === data.refresh_token) await deleteOAuthRecord();
-      await revokeQuietly(issued);
-      return;
+    // Re-check after the write: cancelled, or the policy tightened while the record was written.
+    const after = isLive(l) ? storeForbidden(l, grantedScopes) : 'the login was cancelled';
+    if (!isLive(l) || after) {
+      // Take back exactly what we wrote, and always revoke, even if the cleanup itself throws.
+      try {
+        await undoSave(data.refresh_token);
+      } finally {
+        revokeDetached(issued);
+      }
+      return finish(l, 'failed', `login not stored: ${after}`); // no-op unless still waiting
     }
     l.grantedScopes = grantedScopes;
     l.storedIn = stored;
     finish(l, 'complete');
   } catch (e) {
+    // A token was issued but the flow broke: never leave a live grant nobody can use or see.
+    try {
+      if (saveAttempted && issued) await undoSave(issued);
+    } catch {
+      /* best effort */
+    } finally {
+      revokeDetached(issued);
+    }
     finish(l, 'failed', `login failed (${(e as Error)?.name ?? 'error'})`);
   }
+}
+
+/** Deletes the stored record only if it is the one this login wrote. */
+async function undoSave(refreshToken: string): Promise<void> {
+  const now = await loadOAuthRecord();
+  if (now?.record.refresh_token === refreshToken) await deleteOAuthRecord();
 }
 
 function handleCallback(l: Login, req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -407,6 +502,7 @@ export async function startLogin(args: {
   const server = http.createServer();
   const login = {
     epoch: ++epoch,
+    abort: new AbortController(),
     services: names,
     state,
     verifier,
