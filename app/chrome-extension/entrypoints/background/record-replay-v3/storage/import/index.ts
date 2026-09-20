@@ -1,5 +1,5 @@
 /**
- * @fileoverview Import 模块导出入口
+ * @fileoverview Import module export entry point
  */
 
 export * from './v2-reader';

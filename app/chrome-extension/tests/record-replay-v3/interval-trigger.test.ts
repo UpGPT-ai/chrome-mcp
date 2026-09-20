@@ -1,6 +1,6 @@
 /**
  * @fileoverview Interval Trigger Handler Tests
- * @description 测试 interval 触发器的安装、卸载和触发行为
+ * @description Tests install, uninstall, and firing behavior of interval triggers
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';

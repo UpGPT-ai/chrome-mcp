@@ -4,10 +4,10 @@ import { COMMAND_NAME } from './constant';
 import { colorText, registerWithElevatedPermissions, writeNodePathFile } from './utils';
 
 /**
- * 主函数
+ * Main function
  */
 async function main(): Promise<void> {
-  console.log(colorText(`正在注册 ${COMMAND_NAME} Native Messaging主机...`, 'blue'));
+  console.log(colorText(`Registering the ${COMMAND_NAME} Native Messaging host...`, 'blue'));
 
   try {
     // Write Node.js path before registration
@@ -15,13 +15,16 @@ async function main(): Promise<void> {
 
     await registerWithElevatedPermissions();
     console.log(
-      colorText('注册成功！现在Chrome扩展可以通过Native Messaging与本地服务通信。', 'green'),
+      colorText(
+        'Registration successful! The Chrome extension can now communicate with the local service via Native Messaging.',
+        'green',
+      ),
     );
   } catch (error: any) {
-    console.error(colorText(`注册失败: ${error.message}`, 'red'));
+    console.error(colorText(`Registration failed: ${error.message}`, 'red'));
     process.exit(1);
   }
 }
 
-// 执行主函数
+// Run the main function
 main();

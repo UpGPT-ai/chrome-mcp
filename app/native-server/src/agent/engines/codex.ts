@@ -29,10 +29,10 @@ interface TodoListItem {
  * it focuses on streaming Codex JSON events into RealtimeEvent envelopes that the
  * sidepanel UI can consume.
  *
- * 中文说明：该引擎基于 other/cweb 中 Codex 适配器的事件协议，完整处理
- * item.started/item.delta/item.completed/item.failed/error 等事件，并
- * 通过 AgentStreamManager 将编码后的 RealtimeEvent 推送给 sidepanel，
- * 确保数据链路「Sidepanel → Native Server → Codex CLI → Sidepanel」闭环。
+ * This engine is based on the event protocol of the Codex adapter in other/cweb. It fully
+ * handles item.started/item.delta/item.completed/item.failed/error events and pushes the
+ * encoded RealtimeEvents to the sidepanel via AgentStreamManager, closing the data loop
+ * "Sidepanel -> Native Server -> Codex CLI -> Sidepanel".
  */
 const CHROME_MCP_TOKEN_ENV = 'CHROME_MCP_AUTH_TOKEN';
 

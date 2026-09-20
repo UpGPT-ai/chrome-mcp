@@ -2,18 +2,18 @@ import { describe, expect, test, afterAll, beforeAll } from '@jest/globals';
 import supertest from 'supertest';
 import Server from './index';
 
-describe('服务器测试', () => {
-  // 启动服务器测试实例
+describe('Server tests', () => {
+  // Start a server instance for testing
   beforeAll(async () => {
     await Server.getInstance().ready();
   });
 
-  // 关闭服务器
+  // Shut down the server
   afterAll(async () => {
     await Server.stop();
   });
 
-  test('GET /ping 应返回正确响应', async () => {
+  test('GET /ping should return the correct response', async () => {
     const response = await supertest(Server.getInstance().server)
       .get('/ping')
       .expect(200)
