@@ -8,6 +8,19 @@ export const TOOL_NAMES = {
     SCREENSHOT: 'chrome_screenshot',
     CLOSE_TABS: 'chrome_close_tabs',
     SWITCH_TAB: 'chrome_switch_tab',
+    MOVE_TABS: 'chrome_move_tabs',
+    CREATE_WINDOW: 'chrome_create_window',
+    UPDATE_WINDOW: 'chrome_update_window',
+    CLOSE_WINDOW: 'chrome_close_window',
+    UPDATE_TAB: 'chrome_update_tab',
+    DISCARD_TABS: 'chrome_discard_tabs',
+    DUPLICATE_TAB: 'chrome_duplicate_tab',
+    RELOAD_TABS: 'chrome_reload_tabs',
+    QUERY_TABS: 'chrome_query_tabs',
+    GROUP_TABS: 'chrome_group_tabs',
+    UNGROUP_TABS: 'chrome_ungroup_tabs',
+    UPDATE_TAB_GROUP: 'chrome_update_tab_group',
+    LIST_TAB_GROUPS: 'chrome_list_tab_groups',
     WEB_FETCHER: 'chrome_get_web_content',
     CLICK: 'chrome_click_element',
     FILL: 'chrome_fill_or_select',
@@ -409,6 +422,11 @@ export const TOOL_SCHEMAS: Tool[] = [
         newWindow: {
           type: 'boolean',
           description: 'Create a new window to navigate to the URL or not. Defaults to false',
+        },
+        forceNew: {
+          type: 'boolean',
+          description:
+            'Always open a fresh tab even if the URL is already open somewhere. By default an existing tab with the same URL is reused/activated instead.',
         },
         tabId: {
           type: 'number',
@@ -1400,6 +1418,242 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['action'],
+    },
+  },
+  // ---------------------------------------------------------------------
+  // Tab / window management
+  // ---------------------------------------------------------------------
+  {
+    name: TOOL_NAMES.BROWSER.MOVE_TABS,
+    description:
+      'Move one or more tabs to a position and/or into another existing window. Does not change focus unless focus:true. Use chrome_create_window to move tabs into a brand-new window.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabIds: { type: 'array', items: { type: 'number' }, description: 'Tab IDs to move' },
+        windowId: {
+          type: 'number',
+          description: 'Destination window ID. Omit to reorder within the current window.',
+        },
+        index: {
+          type: 'number',
+          description: 'Position in the destination tab strip (0-based). -1 or omitted = end.',
+        },
+        focus: {
+          type: 'boolean',
+          description: 'Activate the first moved tab and focus its window. Defaults to false.',
+        },
+      },
+      required: ['tabIds'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.CREATE_WINDOW,
+    description:
+      'Create a new browser window, optionally adopting existing tabs (moved from their current windows) and/or opening URLs. Created unfocused unless focus:true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabIds: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Existing tab IDs to move into the new window',
+        },
+        urls: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'URLs to open as new tabs in the new window',
+        },
+        focus: { type: 'boolean', description: 'Focus the new window. Defaults to false.' },
+        incognito: { type: 'boolean', description: 'Create an incognito window' },
+        state: {
+          type: 'string',
+          enum: ['normal', 'minimized', 'maximized', 'fullscreen'],
+          description: 'Initial window state',
+        },
+        width: { type: 'number' },
+        height: { type: 'number' },
+        left: { type: 'number' },
+        top: { type: 'number' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.UPDATE_WINDOW,
+    description: 'Update a window: focus, state (minimize/maximize/fullscreen/normal), size, position.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        windowId: { type: 'number', description: 'Window ID to update' },
+        focused: { type: 'boolean' },
+        state: { type: 'string', enum: ['normal', 'minimized', 'maximized', 'fullscreen'] },
+        width: { type: 'number' },
+        height: { type: 'number' },
+        left: { type: 'number' },
+        top: { type: 'number' },
+        drawAttention: { type: 'boolean', description: 'Flash the window in the taskbar/dock' },
+      },
+      required: ['windowId'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.CLOSE_WINDOW,
+    description: 'Close one or more windows and every tab in them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        windowIds: { type: 'array', items: { type: 'number' }, description: 'Window IDs to close' },
+      },
+      required: ['windowIds'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.UPDATE_TAB,
+    description:
+      'Update tab properties: pinned, muted, active, highlighted, autoDiscardable, or url. Applies to every tab in tabIds (active:true accepts a single tab only).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabIds: { type: 'array', items: { type: 'number' }, description: 'Tab IDs to update' },
+        pinned: { type: 'boolean' },
+        muted: { type: 'boolean' },
+        active: { type: 'boolean', description: 'Make this tab the active tab in its window' },
+        highlighted: { type: 'boolean' },
+        autoDiscardable: { type: 'boolean' },
+        url: { type: 'string', description: 'Navigate the tab(s) to this URL' },
+        focusWindow: {
+          type: 'boolean',
+          description: 'With active:true, also focus the window. Defaults to false.',
+        },
+      },
+      required: ['tabIds'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.DISCARD_TABS,
+    description:
+      'Discard (unload) tabs to free memory while keeping them in the tab strip. Active tabs are skipped. Provide tabIds, or windowId / all:true to discard every inactive tab in scope.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabIds: { type: 'array', items: { type: 'number' } },
+        windowId: { type: 'number', description: 'Discard all inactive tabs in this window' },
+        all: { type: 'boolean', description: 'Discard all inactive tabs in every window' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.DUPLICATE_TAB,
+    description: 'Duplicate a tab. The copy is left in the background unless focus:true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number' },
+        focus: { type: 'boolean' },
+      },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.RELOAD_TABS,
+    description: 'Reload one or more tabs, optionally bypassing the cache.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabIds: { type: 'array', items: { type: 'number' } },
+        bypassCache: { type: 'boolean' },
+      },
+      required: ['tabIds'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.QUERY_TABS,
+    description:
+      'Find tabs by URL match pattern, title substring, window, group, pinned/audible/muted/discarded/active state. Returns index, groupId, pinned, discarded, audible, muted and status for each tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        urlPattern: {
+          type: 'string',
+          description:
+            'Chrome match pattern, e.g. "*://*.example.com/*" or "https://app.example.com/path*"',
+        },
+        titleContains: { type: 'string', description: 'Case-insensitive title substring' },
+        windowId: { type: 'number' },
+        groupId: { type: 'number' },
+        pinned: { type: 'boolean' },
+        audible: { type: 'boolean' },
+        muted: { type: 'boolean' },
+        discarded: { type: 'boolean' },
+        active: { type: 'boolean' },
+        status: { type: 'string', enum: ['loading', 'complete'] },
+        limit: { type: 'number', description: 'Max tabs to return' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.GROUP_TABS,
+    description:
+      'Add tabs to a tab group. Omit groupId to create a new group (optionally in a specific windowId) with the given title/color.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabIds: { type: 'array', items: { type: 'number' } },
+        groupId: { type: 'number', description: 'Existing group to add to. Omit to create one.' },
+        windowId: { type: 'number', description: 'Window for a newly created group' },
+        title: { type: 'string' },
+        color: {
+          type: 'string',
+          enum: ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'],
+        },
+        collapsed: { type: 'boolean' },
+      },
+      required: ['tabIds'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.UNGROUP_TABS,
+    description: 'Remove tabs from their tab group. Provide tabIds or a groupId (ungroups all its tabs).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabIds: { type: 'array', items: { type: 'number' } },
+        groupId: { type: 'number' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.UPDATE_TAB_GROUP,
+    description: 'Rename, recolor, collapse/expand, or move a tab group to another window/position.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        groupId: { type: 'number' },
+        title: { type: 'string' },
+        color: {
+          type: 'string',
+          enum: ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'],
+        },
+        collapsed: { type: 'boolean' },
+        moveToWindowId: { type: 'number' },
+        index: { type: 'number' },
+      },
+      required: ['groupId'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.LIST_TAB_GROUPS,
+    description: 'List tab groups (all windows or one window) with their tabs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        windowId: { type: 'number' },
+      },
+      required: [],
     },
   },
 ];

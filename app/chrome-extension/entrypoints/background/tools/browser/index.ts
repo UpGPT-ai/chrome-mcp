@@ -1,5 +1,20 @@
 export { navigateTool, closeTabsTool, switchTabTool } from './common';
 export { windowTool } from './window';
+export {
+  moveTabsTool,
+  createWindowTool,
+  updateWindowTool,
+  closeWindowTool,
+  updateTabTool,
+  discardTabsTool,
+  duplicateTabTool,
+  reloadTabsTool,
+  queryTabsTool,
+  groupTabsTool,
+  ungroupTabsTool,
+  updateTabGroupTool,
+  listTabGroupsTool,
+} from './tabs-manage';
 export { vectorSearchTabsContentTool as searchTabsContentTool } from './vector-search';
 export { screenshotTool } from './screenshot';
 export { webFetcherTool, getInteractiveElementsTool } from './web-fetcher';

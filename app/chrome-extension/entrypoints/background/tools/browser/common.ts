@@ -16,6 +16,7 @@ interface NavigateToolParams {
   tabId?: number;
   windowId?: number;
   background?: boolean; // when true, do not activate tab or focus window
+  forceNew?: boolean; // when true, skip the "URL already open" dedupe and always open a new tab
 }
 
 /**
@@ -48,6 +49,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
       tabId,
       background,
       windowId,
+      forceNew = false,
     } = args;
 
     console.log(
@@ -154,8 +156,25 @@ class NavigateTool extends BaseBrowserToolExecutor {
             // Use host-level wildcard to include all paths; we'll do precise selection later
             const pathWildcard = '/*';
 
-            const hostNoWww = u.host.replace(/^www\./, '');
-            const hostWithWww = hostNoWww.startsWith('www.') ? hostNoWww : `www.${hostNoWww}`;
+            // Only http(s) URLs can be expressed as Chrome match patterns here.
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+              return Array.from(patterns);
+            }
+
+            // www-variants only make sense for real DNS names. IP literals
+            // (127.0.0.1, [::1]), localhost and dotless hosts produce invalid
+            // match patterns such as "http://www.127.0.0.1:4747/*".
+            const hostname = u.hostname;
+            const isIpLiteral =
+              /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.startsWith('[');
+            const isDnsName = !isIpLiteral && hostname !== 'localhost' && hostname.includes('.');
+
+            const hostNoWww = isDnsName ? u.host.replace(/^www\./, '') : u.host;
+            const hostWithWww = isDnsName
+              ? hostNoWww.startsWith('www.')
+                ? hostNoWww
+                : `www.${hostNoWww}`
+              : u.host;
 
             // Keep original host
             patterns.add(`${u.protocol}//${u.host}${pathWildcard}`);
@@ -180,7 +199,15 @@ class NavigateTool extends BaseBrowserToolExecutor {
       };
 
       const urlPatterns = buildUrlPatterns(url);
-      const candidateTabs = await chrome.tabs.query({ url: urlPatterns });
+      let candidateTabs: chrome.tabs.Tab[] = [];
+      if (!forceNew && urlPatterns.length > 0) {
+        try {
+          candidateTabs = await chrome.tabs.query({ url: urlPatterns });
+        } catch (queryError) {
+          // An unexpressible pattern must not block navigation; just skip dedupe.
+          console.warn('Tab dedupe query failed, opening a new tab instead:', queryError);
+        }
+      }
       console.log(`Found ${candidateTabs.length} matching tabs with patterns:`, urlPatterns);
 
       // Prefer strict match when user specifies a concrete path/query.
@@ -251,7 +278,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
       };
 
       const explicitTab = await this.tryGetTab(tabId);
-      const existingTab = explicitTab || pickBestMatch(url, candidateTabs);
+      const existingTab = explicitTab || (forceNew ? undefined : pickBestMatch(url, candidateTabs));
       if (existingTab?.id !== undefined) {
         console.log(
           `URL already open in Tab ID: ${existingTab.id}, Window ID: ${existingTab.windowId}`,
