@@ -7,6 +7,7 @@ export default tseslint.config(
   // Global ignores first - these apply to all configurations
   {
     ignores: [
+      'packaging-template/**',
       'node_modules/',
       'dist/',
       '.output/',
