@@ -140,6 +140,7 @@ export const TOOL_MESSAGE_TYPES = {
 
   // Accessibility tree
   GENERATE_ACCESSIBILITY_TREE: 'generateAccessibilityTree',
+  GENERATE_SNAPSHOT: 'generateSnapshot',
   RESOLVE_REF: 'resolveRef',
   ENSURE_REF_FOR_SELECTOR: 'ensureRefForSelector',
   VERIFY_FINGERPRINT: 'verifyFingerprint',

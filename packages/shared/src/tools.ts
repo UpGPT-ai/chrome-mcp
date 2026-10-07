@@ -44,6 +44,7 @@ export const TOOL_NAMES = {
     CONSOLE: 'chrome_console',
     FILE_UPLOAD: 'chrome_upload_file',
     READ_PAGE: 'chrome_read_page',
+    SNAPSHOT: 'chrome_snapshot',
     COMPUTER: 'chrome_computer',
     HANDLE_DIALOG: 'chrome_handle_dialog',
     HANDLE_DOWNLOAD: 'chrome_handle_download',
@@ -199,6 +200,51 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: {
           type: 'number',
           description: 'Target window ID to pick active tab when tabId is omitted.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SNAPSHOT,
+    description:
+      'Compact accessibility snapshot of the page, one line per element: ref role "name" value=".." and state flags (disabled, checked, expanded, required, invalid). Refs stay stable for the same element while it remains in the DOM.\nPreferred order: chrome_snapshot -> act by ref (chrome_click_element / chrome_fill_or_select / chrome_computer with observe:true) -> read the diff. Take a screenshot only when layout or pixels matter.\nPass `since` (a previous snapshotId) to receive only added, removed, and changed lines.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: {
+          type: 'string',
+          enum: ['viewport', 'page'],
+          description:
+            'viewport = elements intersecting the viewport. page = the whole document (default: page).',
+        },
+        filter: {
+          type: 'string',
+          enum: ['interactive', 'all'],
+          description:
+            'interactive = buttons, links, inputs, and other controls. all = interactive plus named and structural elements (default: all).',
+        },
+        refId: {
+          type: 'string',
+          description:
+            'Snapshot only the subtree rooted at this ref from a previous chrome_snapshot or chrome_read_page in the same tab.',
+        },
+        maxItems: {
+          type: 'number',
+          description: 'Maximum lines to return (default 400, max 2000).',
+        },
+        since: {
+          type: 'string',
+          description:
+            'snapshotId from a previous chrome_snapshot on this tab. When set, the result is only added, removed, and changed lines.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target an existing tab by ID (default: active tab).',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Target window ID to pick the active tab when tabId is omitted.',
         },
       },
       required: [],

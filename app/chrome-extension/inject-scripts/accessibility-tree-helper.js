@@ -684,6 +684,221 @@
   // Expose API on window
   window.__generateAccessibilityTree = __generateAccessibilityTree;
 
+  /**
+   * Reuse an existing ref for this element. Never renumber an element that is
+   * still in the map.
+   * @param {Element} el
+   * @returns {string}
+   */
+  function assignStableRef(el) {
+    if (!window.__claudeElementMap) window.__claudeElementMap = {};
+    if (!window.__claudeRefCounter) window.__claudeRefCounter = 0;
+    for (const k in window.__claudeElementMap) {
+      const weak = window.__claudeElementMap[k];
+      if (weak && typeof weak.deref === 'function' && weak.deref() === el) return k;
+    }
+    const refId = `ref_${++window.__claudeRefCounter}`;
+    window.__claudeElementMap[refId] = new WeakRef(el);
+    return refId;
+  }
+
+  /**
+   * @param {Element} el
+   * @returns {string|null}
+   */
+  function snapshotValue(el) {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'input') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      if (
+        type === 'password' ||
+        type === 'hidden' ||
+        type === 'checkbox' ||
+        type === 'radio' ||
+        type === 'file'
+      ) {
+        return null;
+      }
+      return el.value == null ? null : String(el.value);
+    }
+    if (tag === 'textarea') return el.value == null ? '' : String(el.value);
+    if (tag === 'select') {
+      const sel = /** @type {HTMLSelectElement} */ (el);
+      const opt = sel.options && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+      const text = opt && opt.textContent ? opt.textContent.trim() : '';
+      return text || (sel.value == null ? '' : String(sel.value));
+    }
+    const now = el.getAttribute && el.getAttribute('aria-valuenow');
+    if (now != null && String(now) !== '') return String(now);
+    if (/** @type {HTMLElement} */ (el).isContentEditable) {
+      const text = (el.textContent || '').trim();
+      return text || null;
+    }
+    return null;
+  }
+
+  /**
+   * @param {Element} el
+   * @returns {string[]}
+   */
+  function snapshotFlags(el) {
+    const flags = [];
+    const ariaDisabled = el.getAttribute && el.getAttribute('aria-disabled') === 'true';
+    if (el.hasAttribute('disabled') || ariaDisabled || /** @type {any} */ (el).disabled === true) {
+      flags.push('disabled');
+    }
+    if (
+      /** @type {any} */ (el).checked === true ||
+      (el.getAttribute && el.getAttribute('aria-checked') === 'true')
+    ) {
+      flags.push('checked');
+    }
+    if (el.getAttribute && el.getAttribute('aria-expanded') === 'true') flags.push('expanded');
+    if (
+      el.hasAttribute('required') ||
+      (el.getAttribute && el.getAttribute('aria-required') === 'true') ||
+      /** @type {any} */ (el).required === true
+    ) {
+      flags.push('required');
+    }
+    let invalid = el.getAttribute && el.getAttribute('aria-invalid') === 'true';
+    try {
+      if (!invalid && el.matches && el.matches(':invalid')) invalid = true;
+    } catch (_) {
+      /* :invalid can throw on non-form elements in older engines */
+    }
+    if (invalid) flags.push('invalid');
+    return flags;
+  }
+
+  /**
+   * One compact line: ref role "name" value=".." disabled checked ...
+   * @param {Element} el
+   * @param {string} refId
+   */
+  function formatSnapshotLine(el, refId) {
+    const role = inferRole(el);
+    let name = inferLabel(el) || '';
+    name = name.replace(/\s+/g, ' ').trim().slice(0, MAX_LINE_LABEL).replace(/"/g, '\\"');
+    let line = `${refId} ${role}`;
+    if (name) line += ` "${name}"`;
+    const value = snapshotValue(el);
+    if (value != null && String(value) !== '') {
+      const shown = String(value).replace(/\s+/g, ' ').trim().slice(0, 80).replace(/"/g, '\\"');
+      if (shown) line += ` value="${shown}"`;
+    }
+    const flags = snapshotFlags(el);
+    if (flags.length) line += ` ${flags.join(' ')}`;
+    return line;
+  }
+
+  /**
+   * @param {Element} el
+   */
+  function intersectsViewport(el) {
+    const rect = /** @type {HTMLElement} */ (el).getBoundingClientRect();
+    return (
+      rect.top < window.innerHeight &&
+      rect.bottom > 0 &&
+      rect.left < window.innerWidth &&
+      rect.right > 0
+    );
+  }
+
+  /**
+   * Compact snapshot of this frame. Does not enter nested browsing contexts;
+   * the background tool stitches same-origin frames and tags their refs.
+   * @param {{scope?: 'viewport'|'page', filter?: 'interactive'|'all', refId?: string, maxItems?: number}|undefined} options
+   */
+  function __generateCompactSnapshot(options) {
+    const opts = options || {};
+    const scope = opts.scope === 'viewport' ? 'viewport' : 'page';
+    const filter = opts.filter === 'interactive' ? 'interactive' : 'all';
+    const maxItems =
+      Number.isFinite(opts.maxItems) && Number(opts.maxItems) > 0
+        ? Math.floor(Number(opts.maxItems))
+        : 400;
+
+    for (const k in window.__claudeElementMap) {
+      const weak = window.__claudeElementMap[k];
+      if (!weak || typeof weak.deref !== 'function' || !weak.deref())
+        delete window.__claudeElementMap[k];
+    }
+
+    let root = document.body || document.documentElement;
+    if (opts.refId) {
+      const refIdStr = String(opts.refId || '').trim();
+      const el = resolveRef(refIdStr);
+      if (!el || !(el instanceof Element)) {
+        return { error: `ref "${refIdStr}" not found or expired` };
+      }
+      root = el;
+    }
+
+    const lines = [];
+    let omitted = 0;
+    const state = { processed: 0, visited: new WeakSet() };
+
+    const includeElement = (el) => {
+      const tag = el.tagName.toLowerCase();
+      if (['script', 'style', 'meta', 'link', 'title', 'noscript'].includes(tag)) return false;
+      if (el.getAttribute('aria-hidden') === 'true') return false;
+      if (!isVisible(el)) return false;
+      if (scope === 'viewport' && !intersectsViewport(el)) return false;
+      if (filter === 'interactive') return isInteractive(el);
+      if (isInteractive(el) || isStructural(el) || isFormishContainer(el)) return true;
+      return inferLabel(el).length > 0;
+    };
+
+    const walk = (el, depth) => {
+      if (!el || !el.tagName) return;
+      if (depth > MAX_DEPTH || state.processed >= MAX_NODES) return;
+      if (state.visited.has(el)) return;
+      state.visited.add(el);
+      state.processed++;
+
+      const tag = el.tagName.toLowerCase();
+      // Nested documents are stitched by the background tool (work item 2).
+      if (tag !== 'iframe' && tag !== 'frame' && includeElement(el)) {
+        const refId = assignStableRef(el);
+        const line = formatSnapshotLine(el, refId);
+        const bareGeneric = /^ref_\d+ generic$/.test(line);
+        if (!bareGeneric) {
+          if (lines.length < maxItems) lines.push(line);
+          else omitted++;
+        }
+      }
+
+      if (tag === 'iframe' || tag === 'frame') return;
+      if (depth >= MAX_DEPTH || state.processed >= MAX_NODES) return;
+
+      const children = /** @type {HTMLElement} */ (el).children || [];
+      for (let i = 0; i < children.length; i++) walk(children[i], depth + 1);
+
+      // Open shadow roots at any depth. Closed roots are not reachable.
+      try {
+        const shadow = /** @type {any} */ (el).shadowRoot;
+        if (shadow && shadow.children) {
+          for (let i = 0; i < shadow.children.length; i++) walk(shadow.children[i], depth + 1);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    };
+
+    if (root) walk(root, 0);
+
+    return {
+      lines,
+      truncated: omitted > 0,
+      omitted,
+      url: String(location && location.href ? location.href : ''),
+      title: String(document.title || ''),
+    };
+  }
+
+  window.__generateCompactSnapshot = __generateCompactSnapshot;
+
   // ============================================================================
   // Hover for Ref (DOM Fallback Support)
   // ============================================================================
@@ -762,7 +977,10 @@
   // Chrome message bridge for ping and tree generation
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     try {
-      if (request && request.action === 'chrome_read_page_ping') {
+      if (
+        request &&
+        (request.action === 'chrome_read_page_ping' || request.action === 'chrome_snapshot_ping')
+      ) {
         sendResponse({ status: 'pong' });
         return false;
       }
@@ -1042,6 +1260,25 @@
         }
         sendResponse({ success: true, ...result });
         return true;
+      }
+      if (request && request.action === 'generateSnapshot') {
+        try {
+          const result = __generateCompactSnapshot({
+            scope: request.scope,
+            filter: request.filter,
+            refId: request.refId,
+            maxItems: request.maxItems,
+          });
+          if (result && result.error) {
+            sendResponse({ success: false, error: result.error });
+            return true;
+          }
+          sendResponse({ success: true, ...result });
+          return true;
+        } catch (e) {
+          sendResponse({ success: false, error: String(e && e.message ? e.message : e) });
+          return true;
+        }
       }
       if (request && request.action === 'ensureRefForSelector') {
         try {
