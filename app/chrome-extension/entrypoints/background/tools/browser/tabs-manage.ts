@@ -192,6 +192,7 @@ interface CreateWindowParams {
   focus?: boolean;
   incognito?: boolean;
   state?: 'normal' | 'minimized' | 'maximized' | 'fullscreen';
+  type?: 'normal' | 'popup';
   width?: number;
   height?: number;
   left?: number;
@@ -221,6 +222,7 @@ class CreateWindowTool extends BaseBrowserToolExecutor {
       };
       if (args.incognito === true) createData.incognito = true;
       if (args.state) createData.state = args.state;
+      if (args.type === 'popup') createData.type = 'popup';
       if (typeof args.width === 'number') createData.width = args.width;
       if (typeof args.height === 'number') createData.height = args.height;
       if (typeof args.left === 'number') createData.left = args.left;
@@ -679,7 +681,9 @@ class UpdateTabGroupTool extends BaseBrowserToolExecutor {
   async execute(args: UpdateTabGroupParams): Promise<ToolResult> {
     try {
       if (!hasTabGroupsApi()) {
-        return createErrorResponse('chrome.tabGroups API unavailable (missing tabGroups permission?)');
+        return createErrorResponse(
+          'chrome.tabGroups API unavailable (missing tabGroups permission?)',
+        );
       }
       if (typeof args?.groupId !== 'number') return createErrorResponse('groupId is required');
       if (args.color && !GROUP_COLORS.includes(args.color)) {
@@ -721,7 +725,9 @@ class ListTabGroupsTool extends BaseBrowserToolExecutor {
   async execute(args: ListTabGroupsParams): Promise<ToolResult> {
     try {
       if (!hasTabGroupsApi()) {
-        return createErrorResponse('chrome.tabGroups API unavailable (missing tabGroups permission?)');
+        return createErrorResponse(
+          'chrome.tabGroups API unavailable (missing tabGroups permission?)',
+        );
       }
       const q: chrome.tabGroups.QueryInfo = {};
       if (typeof args?.windowId === 'number') q.windowId = args.windowId;

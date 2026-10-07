@@ -8,6 +8,27 @@ import nativeMessagingHostInstance from '../native-messaging-host';
 import { NativeMessageType, TOOL_SCHEMAS } from 'chrome-mcp-shared';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { googleToolSchemas, isGoogleTool, handleGoogleTool } from '../google';
+import { panelToolSchemas, isPanelTool, handlePanelTool, sharedPanels } from '../panels';
+
+/** Calls a tool in the extension and returns the parsed JSON of its first text block. */
+async function callExtensionTool(name: string, args: Record<string, unknown>): Promise<any> {
+  const resp = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
+    { name, args },
+    NativeMessageType.CALL_TOOL,
+    30000,
+  );
+  if (!resp || resp.status !== 'success') {
+    throw new Error(resp?.error || `Extension call ${name} failed`);
+  }
+  const data = resp.data;
+  if (data?.isError) throw new Error(data?.content?.[0]?.text || `${name} failed`);
+  const text = data?.content?.[0]?.text;
+  try {
+    return text ? JSON.parse(text) : data;
+  } catch {
+    return data;
+  }
+}
 
 async function listDynamicFlowTools(): Promise<Tool[]> {
   try {
@@ -71,7 +92,7 @@ export const setupTools = (server: Server) => {
   // List tools handler
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const dynamicTools = await listDynamicFlowTools();
-    return { tools: [...TOOL_SCHEMAS, ...googleToolSchemas, ...dynamicTools] };
+    return { tools: [...TOOL_SCHEMAS, ...googleToolSchemas, ...panelToolSchemas, ...dynamicTools] };
   });
 
   // Call tool handler
@@ -84,6 +105,13 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
   try {
     // Google Workspace tools run in the native host (server-side credentials), not the extension.
     if (isGoogleTool(name)) return await handleGoogleTool(name, args);
+    // Panels (app-style data delivery/capture windows) are served by the native host.
+    if (isPanelTool(name)) {
+      return await handlePanelTool(name, args, {
+        ...sharedPanels(),
+        callExtension: callExtensionTool,
+      });
+    }
     // If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
     if (name && name.startsWith('flow.')) {
       // We need to resolve flow by slug to ID

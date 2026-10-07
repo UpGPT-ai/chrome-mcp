@@ -1466,6 +1466,11 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         focus: { type: 'boolean', description: 'Focus the new window. Defaults to false.' },
         incognito: { type: 'boolean', description: 'Create an incognito window' },
+        type: {
+          type: 'string',
+          enum: ['normal', 'popup'],
+          description: "'popup' makes an app-style window with no tab strip. Defaults to normal.",
+        },
         state: {
           type: 'string',
           enum: ['normal', 'minimized', 'maximized', 'fullscreen'],
@@ -1481,7 +1486,8 @@ export const TOOL_SCHEMAS: Tool[] = [
   },
   {
     name: TOOL_NAMES.BROWSER.UPDATE_WINDOW,
-    description: 'Update a window: focus, state (minimize/maximize/fullscreen/normal), size, position.',
+    description:
+      'Update a window: focus, state (minimize/maximize/fullscreen/normal), size, position.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1616,7 +1622,8 @@ export const TOOL_SCHEMAS: Tool[] = [
   },
   {
     name: TOOL_NAMES.BROWSER.UNGROUP_TABS,
-    description: 'Remove tabs from their tab group. Provide tabIds or a groupId (ungroups all its tabs).',
+    description:
+      'Remove tabs from their tab group. Provide tabIds or a groupId (ungroups all its tabs).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1628,7 +1635,8 @@ export const TOOL_SCHEMAS: Tool[] = [
   },
   {
     name: TOOL_NAMES.BROWSER.UPDATE_TAB_GROUP,
-    description: 'Rename, recolor, collapse/expand, or move a tab group to another window/position.',
+    description:
+      'Rename, recolor, collapse/expand, or move a tab group to another window/position.',
     inputSchema: {
       type: 'object',
       properties: {

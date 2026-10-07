@@ -12,6 +12,7 @@ import {
 import { TOOL_SCHEMAS } from 'chrome-mcp-shared';
 import { authHeaders } from '../security/local-auth';
 import { googleToolSchemas } from '../google';
+import { panelToolSchemas } from '../panels';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import * as fs from 'fs';
@@ -80,7 +81,7 @@ export const ensureMcpClient = async () => {
 export const setupTools = (server: Server) => {
   // List tools handler
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...TOOL_SCHEMAS, ...googleToolSchemas],
+    tools: [...TOOL_SCHEMAS, ...googleToolSchemas, ...panelToolSchemas],
   }));
 
   // Call tool handler
