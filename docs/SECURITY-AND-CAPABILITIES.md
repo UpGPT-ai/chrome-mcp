@@ -92,6 +92,20 @@ browser, do not install it, or use a separate Chrome profile (recommended, see t
   its built-in chat UI. This **spawns processes on your machine** and is separate from the MCP tools.
 - **Mitigation:** only used if you use that UI; it does not run for MCP-only use.
 
+### 9. Record-and-replay automation (RPA) (`flow.<name>` tools, the flow builder, the side panel)
+
+- **Why:** repeat a task without an agent in the loop: record it once, edit it in the visual
+  builder, and run it on demand or on a trigger.
+- **What it enables:** saved flows can click, fill, navigate, extract data, run `script` steps
+  (arbitrary JavaScript), and make `http` requests from your browser context **with your cookies**.
+  Triggers (cron, interval, one-off, URL match, keyboard shortcut, context menu, element appearance)
+  can start a flow **without you or an AI client present**. Flows you publish appear to the connected
+  AI client as `flow.<name>` tools.
+- **Limits:** flows are stored locally in the extension (IndexedDB) and run only while Chrome is
+  open and the extension is enabled. Only flows you explicitly publish are exposed over MCP. Review a
+  flow's steps before enabling a trigger, and delete flows you no longer use. The planned site policy
+  and audit log (see the hardening roadmap) are intended to cover flow runs as well.
+
 ## The local bridge (security model)
 
 The bridge listens on **`127.0.0.1:12306`** (loopback only, not reachable from the network). Three layers:
