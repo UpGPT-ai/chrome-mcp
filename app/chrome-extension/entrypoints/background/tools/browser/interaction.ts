@@ -1,6 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, parseAgentRef } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { TIMEOUTS, ERROR_MESSAGES } from '@/common/constants';
 
@@ -24,6 +24,23 @@ interface ClickToolParams {
   modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean };
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
+}
+
+/**
+ * `ref_12@7` addresses local ref `ref_12` inside frame 7.
+ * An explicit frameId is used when the ref has no suffix.
+ */
+export function resolveRefTarget(
+  ref?: string,
+  frameId?: number,
+): { ref?: string; frameId?: number } {
+  if (typeof ref !== 'string' || !ref.trim()) return { frameId };
+  const parsed = parseAgentRef(ref);
+  return { ref: parsed.ref, frameId: parsed.frameId ?? frameId };
+}
+
+function frameIdsFor(frameId?: number): number[] | undefined {
+  return typeof frameId === 'number' ? [frameId] : undefined;
 }
 
 /**
@@ -65,12 +82,21 @@ class ClickTool extends BaseBrowserToolExecutor {
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
       }
 
-      let finalRef = args.ref;
+      const target = resolveRefTarget(args.ref, frameId);
+      const finalFrameId = target.frameId;
+      let finalRef = target.ref;
       let finalSelector = selector;
 
       // If selector is XPath, convert to ref first
       if (selector && selectorType === 'xpath') {
-        await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+        await this.injectContentScript(
+          tab.id,
+          ['inject-scripts/accessibility-tree-helper.js'],
+          false,
+          'ISOLATED',
+          false,
+          frameIdsFor(finalFrameId),
+        );
         try {
           const resolved = await this.sendMessageToTab(
             tab.id,
@@ -79,7 +105,7 @@ class ClickTool extends BaseBrowserToolExecutor {
               selector,
               isXPath: true,
             },
-            frameId,
+            finalFrameId,
           );
           if (resolved && resolved.success && resolved.ref) {
             finalRef = resolved.ref;
@@ -96,7 +122,14 @@ class ClickTool extends BaseBrowserToolExecutor {
         }
       }
 
-      await this.injectContentScript(tab.id, ['inject-scripts/click-helper.js']);
+      await this.injectContentScript(
+        tab.id,
+        ['inject-scripts/click-helper.js'],
+        false,
+        'ISOLATED',
+        false,
+        frameIdsFor(finalFrameId),
+      );
 
       // Send click message to content script
       const result = await this.sendMessageToTab(
@@ -114,7 +147,7 @@ class ClickTool extends BaseBrowserToolExecutor {
           cancelable,
           modifiers,
         },
-        frameId,
+        finalFrameId,
       );
 
       // Determine actual click method used
@@ -176,11 +209,11 @@ class FillTool extends BaseBrowserToolExecutor {
    * Execute fill operation
    */
   async execute(args: FillToolParams): Promise<ToolResult> {
-    const { selector, selectorType = 'css', ref, value, frameId } = args;
+    const { selector, selectorType = 'css', value, frameId } = args;
 
     console.log(`Starting fill operation with options:`, args);
 
-    if (!selector && !ref) {
+    if (!selector && !args.ref) {
       return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': Provide ref or selector');
     }
 
@@ -195,12 +228,21 @@ class FillTool extends BaseBrowserToolExecutor {
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
       }
 
-      let finalRef = ref;
+      const target = resolveRefTarget(args.ref, frameId);
+      const finalFrameId = target.frameId;
+      let finalRef = target.ref;
       let finalSelector = selector;
 
       // If selector is XPath, convert to ref first
       if (selector && selectorType === 'xpath') {
-        await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+        await this.injectContentScript(
+          tab.id,
+          ['inject-scripts/accessibility-tree-helper.js'],
+          false,
+          'ISOLATED',
+          false,
+          frameIdsFor(finalFrameId),
+        );
         try {
           const resolved = await this.sendMessageToTab(
             tab.id,
@@ -209,7 +251,7 @@ class FillTool extends BaseBrowserToolExecutor {
               selector,
               isXPath: true,
             },
-            frameId,
+            finalFrameId,
           );
           if (resolved && resolved.success && resolved.ref) {
             finalRef = resolved.ref;
@@ -226,7 +268,14 @@ class FillTool extends BaseBrowserToolExecutor {
         }
       }
 
-      await this.injectContentScript(tab.id, ['inject-scripts/fill-helper.js']);
+      await this.injectContentScript(
+        tab.id,
+        ['inject-scripts/fill-helper.js'],
+        false,
+        'ISOLATED',
+        false,
+        frameIdsFor(finalFrameId),
+      );
 
       // Send fill message to content script
       const result = await this.sendMessageToTab(
@@ -237,7 +286,7 @@ class FillTool extends BaseBrowserToolExecutor {
           ref: finalRef,
           value,
         },
-        frameId,
+        finalFrameId,
       );
 
       if (result && result.error) {

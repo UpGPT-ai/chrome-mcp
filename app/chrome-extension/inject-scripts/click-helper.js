@@ -6,6 +6,83 @@ if (window.__CLICK_HELPER_INITIALIZED__) {
   // Already initialized, skip
 } else {
   window.__CLICK_HELPER_INITIALIZED__ = true;
+
+  /** elementFromPoint that walks open shadow roots. */
+  function pierceFromPoint(x, y) {
+    let el = document.elementFromPoint(x, y);
+    for (let i = 0; i < 30 && el && el.shadowRoot; i++) {
+      let inner = null;
+      try {
+        inner = el.shadowRoot.elementFromPoint(x, y);
+      } catch (_) {
+        break;
+      }
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    return el;
+  }
+
+  /** querySelector that also searches open shadow roots at any depth. */
+  function querySelectorDeep(selector) {
+    if (!selector) return null;
+    try {
+      const direct = document.querySelector(selector);
+      if (direct) return direct;
+    } catch (_) {
+      return null;
+    }
+    const stack = [];
+    const seen = new Set();
+    if (document.documentElement) stack.push(document.documentElement);
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+      let shadow = null;
+      try {
+        shadow = node.shadowRoot;
+      } catch (_) {
+        shadow = null;
+      }
+      if (shadow) {
+        try {
+          const hit = shadow.querySelector(selector);
+          if (hit) return hit;
+        } catch (_) {
+          /* selector was already valid at the document level */
+        }
+        const shadowChildren = shadow.children || [];
+        for (let i = 0; i < shadowChildren.length; i++) stack.push(shadowChildren[i]);
+      }
+      const children = node.children || [];
+      for (let i = 0; i < children.length; i++) stack.push(children[i]);
+    }
+    return null;
+  }
+
+  /** contains() that crosses open shadow boundaries toward the host. */
+  function containsDeep(element, hit) {
+    if (!element || !hit) return false;
+    if (element === hit) return true;
+    try {
+      if (element.contains(hit)) return true;
+    } catch (_) {
+      /* ignore */
+    }
+    let node = hit;
+    for (let guard = 0; node && guard < 50; guard++) {
+      if (node === element) return true;
+      const root = node.getRootNode ? node.getRootNode() : null;
+      if (root && root instanceof ShadowRoot) {
+        node = root.host;
+        continue;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  }
+
   /**
    * Click on an element matching the selector or at specific coordinates
    * @param {string} selector - CSS selector for the element to click
@@ -83,7 +160,7 @@ if (window.__CLICK_HELPER_INITIALIZED__) {
         clickX = coordinates.x;
         clickY = coordinates.y;
 
-        element = document.elementFromPoint(clickX, clickY);
+        element = pierceFromPoint(clickX, clickY);
 
         if (element) {
           const rect = element.getBoundingClientRect();
@@ -116,7 +193,7 @@ if (window.__CLICK_HELPER_INITIALIZED__) {
           };
         }
       } else {
-        element = document.querySelector(selector);
+        element = querySelectorDeep(selector);
         if (!element) {
           return {
             error: `Element with selector "${selector}" not found`,
@@ -216,7 +293,7 @@ if (window.__CLICK_HELPER_INITIALIZED__) {
    * @param {number} y - Y coordinate relative to the viewport
    */
   function simulateClick(x, y, options = {}) {
-    const element = document.elementFromPoint(x, y);
+    const element = pierceFromPoint(x, y);
     if (!element) return;
     dispatchClickSequence(element, x, y, options, false);
   }
@@ -225,7 +302,7 @@ if (window.__CLICK_HELPER_INITIALIZED__) {
    * Simulate a double click sequence at specific coordinates
    */
   function simulateDoubleClick(x, y, options = {}) {
-    const element = document.elementFromPoint(x, y);
+    const element = pierceFromPoint(x, y);
     if (!element) return;
     dispatchClickSequence(element, x, y, options, true);
   }
@@ -332,10 +409,10 @@ if (window.__CLICK_HELPER_INITIALIZED__) {
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
 
-    const elementAtPoint = document.elementFromPoint(centerX, centerY);
+    const elementAtPoint = pierceFromPoint(centerX, centerY);
     if (!elementAtPoint) return false;
 
-    return element === elementAtPoint || element.contains(elementAtPoint);
+    return containsDeep(element, elementAtPoint);
   }
 
   // Listen for messages from the extension

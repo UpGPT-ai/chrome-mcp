@@ -836,6 +836,7 @@
     }
 
     const lines = [];
+    const childFrames = [];
     let omitted = 0;
     const state = { processed: 0, visited: new WeakSet() };
 
@@ -858,8 +859,25 @@
       state.processed++;
 
       const tag = el.tagName.toLowerCase();
-      // Nested documents are stitched by the background tool (work item 2).
-      if (tag !== 'iframe' && tag !== 'frame' && includeElement(el)) {
+      if (tag === 'iframe' || tag === 'frame') {
+        // Same-origin documents are snapshotted by the background via frameId.
+        // Cross-origin documents are listed and not entered from this frame.
+        let src = '';
+        try {
+          src = el.getAttribute('src') || '';
+        } catch (_) {
+          src = '';
+        }
+        let sameOrigin = false;
+        try {
+          sameOrigin = !!(/** @type {HTMLIFrameElement} */ (el).contentDocument);
+        } catch (_) {
+          sameOrigin = false;
+        }
+        childFrames.push({ src: String(src || ''), sameOrigin });
+        return;
+      }
+      if (includeElement(el)) {
         const refId = assignStableRef(el);
         const line = formatSnapshotLine(el, refId);
         const bareGeneric = /^ref_\d+ generic$/.test(line);
@@ -868,8 +886,6 @@
           else omitted++;
         }
       }
-
-      if (tag === 'iframe' || tag === 'frame') return;
       if (depth >= MAX_DEPTH || state.processed >= MAX_NODES) return;
 
       const children = /** @type {HTMLElement} */ (el).children || [];
@@ -890,6 +906,7 @@
 
     return {
       lines,
+      childFrames,
       truncated: omitted > 0,
       omitted,
       url: String(location && location.href ? location.href : ''),
@@ -917,6 +934,36 @@
     const map = window.__claudeElementMap || {};
     const weak = map[ref];
     return weak && typeof weak.deref === 'function' ? weak.deref() : null;
+  }
+
+  /**
+   * Offset of this frame's viewport inside the top frame.
+   * Same-origin parents expose frameElement. Cross-origin stops the walk.
+   */
+  function topViewportOffset() {
+    let x = 0;
+    let y = 0;
+    let current = window;
+    const seen = new Set();
+    while (current && current !== current.top && !seen.has(current)) {
+      seen.add(current);
+      let frameEl = null;
+      try {
+        frameEl = current.frameElement;
+      } catch (_) {
+        break;
+      }
+      if (!frameEl || !(frameEl instanceof Element)) break;
+      const rect = frameEl.getBoundingClientRect();
+      x += rect.left;
+      y += rect.top;
+      try {
+        current = current.parent;
+      } catch (_) {
+        break;
+      }
+    }
+    return { x: Math.round(x), y: Math.round(y) };
   }
 
   function dispatchHoverEvents(el) {
@@ -1747,13 +1794,16 @@
             return true;
           }
           const rect = /** @type {HTMLElement} */ (el).getBoundingClientRect();
+          const center = {
+            x: Math.round(rect.left + rect.width / 2),
+            y: Math.round(rect.top + rect.height / 2),
+          };
+          const offset = topViewportOffset();
           sendResponse({
             success: true,
             rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-            center: {
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-            },
+            center,
+            topCenter: { x: center.x + offset.x, y: center.y + offset.y },
             selector: (function () {
               // Simple selector generation inline to avoid duplication
               const generateSelector = function (node) {

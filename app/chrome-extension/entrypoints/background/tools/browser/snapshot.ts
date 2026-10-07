@@ -1,7 +1,16 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES, diffSnapshotLines, parseAgentRef } from 'chrome-mcp-shared';
-import type { SnapshotLineDiff } from 'chrome-mcp-shared';
+import {
+  TOOL_NAMES,
+  crossOriginFrameLine,
+  diffSnapshotLines,
+  frameIsSameOrigin,
+  matchFrameSlots,
+  parseAgentRef,
+  prefixSnapshotLine,
+  unmatchedFrames,
+} from 'chrome-mcp-shared';
+import type { FrameRecord, FrameSlot, SnapshotLineDiff } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { ERROR_MESSAGES } from '@/common/constants';
 
@@ -45,6 +54,15 @@ export interface SnapshotQuery {
   refId?: string;
   maxItems: number;
   frameId?: number;
+}
+
+interface LocalFrameSnapshot {
+  lines: string[];
+  childFrames: FrameSlot[];
+  url: string;
+  title: string;
+  truncated: boolean;
+  omitted: number;
 }
 
 const snapshotsById = new Map<string, StoredSnapshot>();
@@ -196,41 +214,151 @@ class SnapshotTool extends BaseBrowserToolExecutor {
 
   /**
    * Capture the current compact snapshot without storing it.
-   * Item 2 extends this to stitch same-origin frames.
+   * Same-origin iframes are stitched in. Their refs are `ref_N@frameId`.
+   * Cross-origin iframes are listed and not entered unless `frameId` targets one
+   * and the extension has host access for that URL.
    */
   async capture(tabId: number, query: SnapshotQuery): Promise<CapturedSnapshot> {
-    const frameIds = typeof query.frameId === 'number' ? [query.frameId] : undefined;
+    const parsedRef = query.refId ? parseAgentRef(query.refId) : undefined;
+    let rootFrame = 0;
+    if (typeof query.frameId === 'number') rootFrame = query.frameId;
+    else if (parsedRef?.frameId !== undefined) rootFrame = parsedRef.frameId;
+    const rootRef =
+      parsedRef && (parsedRef.frameId === undefined || parsedRef.frameId === rootFrame)
+        ? parsedRef.ref
+        : undefined;
+
+    const frames = await this.listFrames(tabId);
+    const byParent = new Map<number, FrameRecord[]>();
+    for (const frame of frames) {
+      const list = byParent.get(frame.parentFrameId) || [];
+      list.push(frame);
+      byParent.set(frame.parentFrameId, list);
+    }
+
+    const lines: string[] = [];
+    let url = '';
+    let title = '';
+    let truncated = false;
+    let omitted = 0;
+    let budget = query.maxItems;
+    const visited = new Set<number>();
+
+    const pushLine = (line: string) => {
+      if (budget <= 0) {
+        truncated = true;
+        omitted++;
+        return;
+      }
+      lines.push(line);
+      budget--;
+    };
+
+    const walk = async (frameId: number, refId?: string): Promise<void> => {
+      if (visited.has(frameId)) return;
+      visited.add(frameId);
+      let local: LocalFrameSnapshot;
+      try {
+        local = await this.captureFrame(
+          tabId,
+          frameId,
+          { ...query, maxItems: Math.max(budget, 1) },
+          refId,
+        );
+      } catch (error) {
+        if (frameId === rootFrame) throw error;
+        pushLine(crossOriginFrameLine('', frameId));
+        return;
+      }
+      if (!url) {
+        url = local.url;
+        title = local.title;
+      }
+      if (local.truncated) truncated = true;
+      omitted += local.omitted;
+      for (const line of local.lines) pushLine(prefixSnapshotLine(line, frameId));
+
+      const children = byParent.get(frameId) || [];
+      const matched = matchFrameSlots(local.childFrames, children, local.url);
+      const used: number[] = [];
+      for (const pair of matched) {
+        if (pair.frame) used.push(pair.frame.frameId);
+        if (pair.slot.sameOrigin && pair.frame) {
+          await walk(pair.frame.frameId);
+          continue;
+        }
+        if (!pair.slot.sameOrigin) {
+          pushLine(
+            crossOriginFrameLine(pair.slot.src || pair.frame?.url || '', pair.frame?.frameId),
+          );
+        }
+      }
+      for (const child of unmatchedFrames(children, used)) {
+        if (frameIsSameOrigin(local.url, child.url)) await walk(child.frameId);
+        else pushLine(crossOriginFrameLine(child.url, child.frameId));
+      }
+    };
+
+    await walk(rootFrame, rootRef);
+    return { lines, url, title, truncated, omitted };
+  }
+
+  private async listFrames(tabId: number): Promise<FrameRecord[]> {
+    try {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId });
+      return (frames || []).map((frame) => ({
+        frameId: frame.frameId,
+        parentFrameId: frame.parentFrameId,
+        url: frame.url || '',
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Run the in-page snapshot in one frame. Host access is required for cross-origin frames. */
+  private async captureFrame(
+    tabId: number,
+    frameId: number,
+    query: SnapshotQuery,
+    refId?: string,
+  ): Promise<LocalFrameSnapshot> {
     await this.injectContentScript(
       tabId,
       ['inject-scripts/accessibility-tree-helper.js'],
       false,
       'ISOLATED',
       false,
-      frameIds,
+      [frameId],
     );
-
-    const localRef = query.refId ? parseAgentRef(query.refId).ref : undefined;
     const resp = await this.sendMessageToTab(
       tabId,
       {
         action: TOOL_MESSAGE_TYPES.GENERATE_SNAPSHOT,
         scope: query.scope,
         filter: query.filter,
-        refId: localRef,
+        refId,
         maxItems: query.maxItems,
       },
-      query.frameId,
+      frameId,
     );
-
     if (!resp || resp.success !== true) {
-      throw new Error(resp?.error || 'Failed to generate snapshot');
+      throw new Error(resp?.error || `Failed to generate snapshot in frame ${frameId}`);
     }
-
     const lines = Array.isArray(resp.lines)
       ? resp.lines.filter((line: unknown) => typeof line === 'string')
       : [];
+    const childFrames: FrameSlot[] = Array.isArray(resp.childFrames)
+      ? resp.childFrames
+          .filter((slot: unknown) => slot && typeof slot === 'object')
+          .map((slot: { src?: unknown; sameOrigin?: unknown }) => ({
+            src: typeof slot.src === 'string' ? slot.src : '',
+            sameOrigin: slot.sameOrigin === true,
+          }))
+      : [];
     return {
       lines,
+      childFrames,
       url: typeof resp.url === 'string' ? resp.url : '',
       title: typeof resp.title === 'string' ? resp.title : '',
       truncated: resp.truncated === true,

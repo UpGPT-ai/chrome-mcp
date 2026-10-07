@@ -246,6 +246,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Target window ID to pick the active tab when tabId is omitted.',
         },
+        frameId: {
+          type: 'number',
+          description:
+            'Snapshot this frame only. Use it to read a cross-origin iframe when the extension has host access. Same-origin frames are included automatically and their refs look like ref_12@frameId.',
+        },
       },
       required: [],
     },
@@ -271,7 +276,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         ref: {
           type: 'string',
           description:
-            'Element ref from chrome_read_page. For click/scroll/scroll_to/key/type and drag end when provided; takes precedence over coordinates.',
+            'Element ref from chrome_snapshot or chrome_read_page. Refs inside iframes look like ref_12@frameId. For click/scroll/scroll_to/key/type and drag end when provided; takes precedence over coordinates.',
         },
         coordinates: {
           type: 'object',
@@ -292,7 +297,8 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         startRef: {
           type: 'string',
-          description: 'Drag start ref from chrome_read_page (alternative to startCoordinates).',
+          description:
+            'Drag start ref from chrome_snapshot or chrome_read_page (alternative to startCoordinates). Iframe refs look like ref_12@frameId.',
         },
         scrollDirection: {
           type: 'string',
@@ -950,7 +956,8 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         ref: {
           type: 'string',
-          description: 'Element ref from chrome_read_page (takes precedence over selector).',
+          description:
+            'Element ref from chrome_snapshot or chrome_read_page (takes precedence over selector). Iframe refs look like ref_12@frameId.',
         },
         coordinates: {
           type: 'object',
@@ -1022,7 +1029,8 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         ref: {
           type: 'string',
-          description: 'Element ref from chrome_read_page (takes precedence over selector).',
+          description:
+            'Element ref from chrome_snapshot or chrome_read_page (takes precedence over selector). Iframe refs look like ref_12@frameId.',
         },
         value: {
           type: ['string', 'number', 'boolean'],

@@ -6,6 +6,80 @@ if (window.__FILL_HELPER_INITIALIZED__) {
   // Already initialized, skip
 } else {
   window.__FILL_HELPER_INITIALIZED__ = true;
+
+  function pierceFromPoint(x, y) {
+    let el = document.elementFromPoint(x, y);
+    for (let i = 0; i < 30 && el && el.shadowRoot; i++) {
+      let inner = null;
+      try {
+        inner = el.shadowRoot.elementFromPoint(x, y);
+      } catch (_) {
+        break;
+      }
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    return el;
+  }
+
+  function querySelectorDeep(selector) {
+    if (!selector) return null;
+    try {
+      const direct = document.querySelector(selector);
+      if (direct) return direct;
+    } catch (_) {
+      return null;
+    }
+    const stack = [];
+    const seen = new Set();
+    if (document.documentElement) stack.push(document.documentElement);
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+      let shadow = null;
+      try {
+        shadow = node.shadowRoot;
+      } catch (_) {
+        shadow = null;
+      }
+      if (shadow) {
+        try {
+          const hit = shadow.querySelector(selector);
+          if (hit) return hit;
+        } catch (_) {
+          /* ignore */
+        }
+        const shadowChildren = shadow.children || [];
+        for (let i = 0; i < shadowChildren.length; i++) stack.push(shadowChildren[i]);
+      }
+      const children = node.children || [];
+      for (let i = 0; i < children.length; i++) stack.push(children[i]);
+    }
+    return null;
+  }
+
+  function containsDeep(element, hit) {
+    if (!element || !hit) return false;
+    if (element === hit) return true;
+    try {
+      if (element.contains(hit)) return true;
+    } catch (_) {
+      /* ignore */
+    }
+    let node = hit;
+    for (let guard = 0; node && guard < 50; guard++) {
+      if (node === element) return true;
+      const root = node.getRootNode ? node.getRootNode() : null;
+      if (root && root instanceof ShadowRoot) {
+        node = root.host;
+        continue;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  }
+
   /**
    * Fill an input element with the specified value
    * @param {string} selector - CSS selector for the element to fill
@@ -30,7 +104,7 @@ if (window.__FILL_HELPER_INITIALIZED__) {
           };
         }
       } else {
-        element = document.querySelector(selector);
+        element = querySelectorDeep(selector);
       }
       if (!element) {
         return {
@@ -325,10 +399,10 @@ if (window.__FILL_HELPER_INITIALIZED__) {
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
 
-    const elementAtPoint = document.elementFromPoint(centerX, centerY);
+    const elementAtPoint = pierceFromPoint(centerX, centerY);
     if (!elementAtPoint) return false;
 
-    return element === elementAtPoint || element.contains(elementAtPoint);
+    return containsDeep(element, elementAtPoint);
   }
 
   // Listen for messages from the extension

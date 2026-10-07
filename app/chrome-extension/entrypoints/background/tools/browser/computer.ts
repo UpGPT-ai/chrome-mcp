@@ -3,7 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { ERROR_MESSAGES, TIMEOUTS } from '@/common/constants';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
-import { clickTool, fillTool } from './interaction';
+import { clickTool, fillTool, resolveRefTarget } from './interaction';
 import { keyboardTool } from './keyboard';
 import { screenshotTool } from './screenshot';
 import { screenshotContextManager, scaleCoordinates } from '@/utils/screenshot-context';
@@ -292,6 +292,38 @@ class ComputerTool extends BaseBrowserToolExecutor {
     return mapping[action] || null;
   }
 
+  private async injectTreeHelper(tabId: number, frameId?: number): Promise<void> {
+    await this.injectContentScript(
+      tabId,
+      ['inject-scripts/accessibility-tree-helper.js'],
+      false,
+      'ISOLATED',
+      false,
+      typeof frameId === 'number' ? [frameId] : undefined,
+    );
+  }
+
+  /** Resolve a ref, including `ref_N@frameId`, to top-frame viewport coordinates. */
+  private async resolveRefViewportPoint(
+    tabId: number,
+    ref: string,
+    fallbackFrameId?: number,
+  ): Promise<Coordinates | null> {
+    const target = resolveRefTarget(ref, fallbackFrameId);
+    if (!target.ref) return null;
+    await this.injectTreeHelper(tabId, target.frameId);
+    const resolved = await this.sendMessageToTab(
+      tabId,
+      { action: TOOL_MESSAGE_TYPES.RESOLVE_REF, ref: target.ref },
+      target.frameId,
+    );
+    const point = resolved?.topCenter || resolved?.center;
+    if (!resolved?.success || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      return null;
+    }
+    return { x: point.x, y: point.y };
+  }
+
   private async executeAction(params: ComputerParams, tab: chrome.tabs.Tab): Promise<ToolResult> {
     if (!tab.id) {
       return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
@@ -360,46 +392,66 @@ class ComputerTool extends BaseBrowserToolExecutor {
 
         try {
           if (params.ref) {
-            await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+            const target = resolveRefTarget(params.ref, params.frameId);
+            await this.injectTreeHelper(tab.id, target.frameId);
             // Scroll element into view first to ensure it's visible
             try {
-              await this.sendMessageToTab(tab.id, { action: 'focusByRef', ref: params.ref });
+              await this.sendMessageToTab(
+                tab.id,
+                { action: 'focusByRef', ref: target.ref },
+                target.frameId,
+              );
             } catch {
               // Best effort - continue even if scroll fails
             }
-            // Re-resolve coordinates after scroll
-            const resolved = await this.sendMessageToTab(tab.id, {
-              action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
-              ref: params.ref,
-            });
-            if (resolved && resolved.success) {
-              coord = project({ x: resolved.center.x, y: resolved.center.y });
+            // Re-resolve coordinates after scroll. topCenter includes iframe offsets.
+            const resolved = await this.sendMessageToTab(
+              tab.id,
+              { action: TOOL_MESSAGE_TYPES.RESOLVE_REF, ref: target.ref },
+              target.frameId,
+            );
+            const point = resolved?.topCenter || resolved?.center;
+            if (resolved && resolved.success && point) {
+              coord = project({ x: point.x, y: point.y });
               resolvedBy = 'ref';
             }
           } else if (params.selector) {
-            await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+            await this.injectTreeHelper(tab.id, params.frameId);
             const selectorType = params.selectorType || 'css';
-            const ensured = await this.sendMessageToTab(tab.id, {
-              action: TOOL_MESSAGE_TYPES.ENSURE_REF_FOR_SELECTOR,
-              selector: params.selector,
-              isXPath: selectorType === 'xpath',
-            });
+            const ensured = await this.sendMessageToTab(
+              tab.id,
+              {
+                action: TOOL_MESSAGE_TYPES.ENSURE_REF_FOR_SELECTOR,
+                selector: params.selector,
+                isXPath: selectorType === 'xpath',
+              },
+              params.frameId,
+            );
             if (ensured && ensured.success) {
               // Scroll element into view first to ensure it's visible
               const resolvedRef = typeof ensured.ref === 'string' ? ensured.ref : undefined;
               if (resolvedRef) {
                 try {
-                  await this.sendMessageToTab(tab.id, { action: 'focusByRef', ref: resolvedRef });
+                  await this.sendMessageToTab(
+                    tab.id,
+                    { action: 'focusByRef', ref: resolvedRef },
+                    params.frameId,
+                  );
                 } catch {
                   // Best effort - continue even if scroll fails
                 }
                 // Re-resolve coordinates after scroll
-                const reResolved = await this.sendMessageToTab(tab.id, {
-                  action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
-                  ref: resolvedRef,
-                });
-                if (reResolved && reResolved.success) {
-                  coord = project({ x: reResolved.center.x, y: reResolved.center.y });
+                const reResolved = await this.sendMessageToTab(
+                  tab.id,
+                  {
+                    action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
+                    ref: resolvedRef,
+                  },
+                  params.frameId,
+                );
+                const point = reResolved?.topCenter || reResolved?.center;
+                if (reResolved && reResolved.success && point) {
+                  coord = project({ x: point.x, y: point.y });
                 } else {
                   coord = project({ x: ensured.center.x, y: ensured.center.y });
                 }
@@ -498,9 +550,12 @@ class ComputerTool extends BaseBrowserToolExecutor {
         );
 
         if (params.ref) {
-          // Prefer DOM click via ref
+          // Prefer DOM click via ref. frameId is carried on refs inside iframes.
+          const target = resolveRefTarget(params.ref, params.frameId);
           const domResult = await clickTool.execute({
-            ref: params.ref,
+            ref: target.ref,
+            frameId: target.frameId,
+            tabId: tab.id,
             waitForNavigation: false,
             timeout: TIMEOUTS.DEFAULT_WAIT * 5,
             button: params.action === 'right_click' ? 'right' : 'left',
@@ -514,6 +569,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
             selector: params.selector,
             selectorType: params.selectorType,
             frameId: params.frameId,
+            tabId: tab.id,
             waitForNavigation: false,
             timeout: TIMEOUTS.DEFAULT_WAIT * 5,
             button: params.action === 'right_click' ? 'right' : 'left',
@@ -548,6 +604,8 @@ class ComputerTool extends BaseBrowserToolExecutor {
         // Prefer DOM path via existing click tool
         const domResult = await clickTool.execute({
           coordinates: coord,
+          tabId: tab.id,
+          frameId: params.frameId,
           waitForNavigation: false,
           timeout: TIMEOUTS.DEFAULT_WAIT * 5,
           button: params.action === 'right_click' ? 'right' : 'left',
@@ -630,21 +688,15 @@ class ComputerTool extends BaseBrowserToolExecutor {
         // If ref is provided, resolve center via accessibility helper
         if (params.ref) {
           try {
-            await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
-            const resolved = await this.sendMessageToTab(tab.id, {
-              action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
-              ref: params.ref,
-            });
-            if (resolved && resolved.success) {
-              coord = project({ x: resolved.center.x, y: resolved.center.y })!;
-            }
+            const point = await this.resolveRefViewportPoint(tab.id, params.ref, params.frameId);
+            if (point) coord = project(point)!;
           } catch (e) {
             // ignore and use provided coordinates
           }
         } else if (params.selector) {
           // Support selector-based click
           try {
-            await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+            await this.injectTreeHelper(tab.id, params.frameId);
             const selectorType = params.selectorType || 'css';
             const ensured = await this.sendMessageToTab(
               tab.id,
@@ -655,8 +707,9 @@ class ComputerTool extends BaseBrowserToolExecutor {
               },
               params.frameId,
             );
-            if (ensured && ensured.success) {
-              coord = project({ x: ensured.center.x, y: ensured.center.y })!;
+            const point = ensured?.topCenter || ensured?.center;
+            if (ensured && ensured.success && point) {
+              coord = project({ x: point.x, y: point.y })!;
             }
           } catch (e) {
             // ignore
@@ -769,29 +822,22 @@ class ComputerTool extends BaseBrowserToolExecutor {
           })();
           if (stale) return stale;
         }
-        if (params.startRef || params.ref) {
-          await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
-        }
         if (params.startRef) {
           try {
-            const resolved = await this.sendMessageToTab(tab.id, {
-              action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
-              ref: params.startRef,
-            });
-            if (resolved && resolved.success)
-              start = project({ x: resolved.center.x, y: resolved.center.y })!;
+            const point = await this.resolveRefViewportPoint(
+              tab.id,
+              params.startRef,
+              params.frameId,
+            );
+            if (point) start = project(point)!;
           } catch {
             // ignore
           }
         }
         if (params.ref) {
           try {
-            const resolved = await this.sendMessageToTab(tab.id, {
-              action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
-              ref: params.ref,
-            });
-            if (resolved && resolved.success)
-              end = project({ x: resolved.center.x, y: resolved.center.y })!;
+            const point = await this.resolveRefViewportPoint(tab.id, params.ref, params.frameId);
+            if (point) end = project(point)!;
           } catch {
             // ignore
           }
@@ -850,13 +896,8 @@ class ComputerTool extends BaseBrowserToolExecutor {
         let coord = params.coordinates ? project(params.coordinates)! : (undefined as any);
         if (params.ref) {
           try {
-            await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
-            const resolved = await this.sendMessageToTab(tab.id, {
-              action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
-              ref: params.ref,
-            });
-            if (resolved && resolved.success)
-              coord = project({ x: resolved.center.x, y: resolved.center.y })!;
+            const point = await this.resolveRefViewportPoint(tab.id, params.ref, params.frameId);
+            if (point) coord = project(point)!;
           } catch {
             // ignore
           }
@@ -931,8 +972,11 @@ class ComputerTool extends BaseBrowserToolExecutor {
         try {
           // Optional focus via ref before typing
           if (params.ref) {
+            const target = resolveRefTarget(params.ref, params.frameId);
             await clickTool.execute({
-              ref: params.ref,
+              ref: target.ref,
+              frameId: target.frameId,
+              tabId: tab.id,
               waitForNavigation: false,
               timeout: TIMEOUTS.DEFAULT_WAIT * 5,
             });
@@ -970,10 +1014,13 @@ class ComputerTool extends BaseBrowserToolExecutor {
           return createErrorResponse('Provide ref or selector and a value for fill');
         }
         // Reuse existing fill tool to leverage robust DOM event behavior
+        const target = resolveRefTarget(params.ref, params.frameId);
         const res = await fillTool.execute({
           selector: params.selector as any,
           selectorType: params.selectorType as any,
-          ref: params.ref as any,
+          ref: target.ref as any,
+          frameId: target.frameId,
+          tabId: tab.id,
           value: params.value as any,
         } as any);
         return res;
@@ -993,8 +1040,11 @@ class ComputerTool extends BaseBrowserToolExecutor {
             continue;
           }
           try {
+            const target = resolveRefTarget(item.ref, params.frameId);
             const r = await fillTool.execute({
-              ref: item.ref as any,
+              ref: target.ref as any,
+              frameId: target.frameId,
+              tabId: tab.id,
               value: item.value as any,
             } as any);
             const ok = !r.isError;
@@ -1037,8 +1087,11 @@ class ComputerTool extends BaseBrowserToolExecutor {
         try {
           // Optional focus via ref before key events
           if (params.ref) {
+            const target = resolveRefTarget(params.ref, params.frameId);
             await clickTool.execute({
-              ref: params.ref,
+              ref: target.ref,
+              frameId: target.frameId,
+              tabId: tab.id,
               waitForNavigation: false,
               timeout: TIMEOUTS.DEFAULT_WAIT * 5,
             });
@@ -1143,11 +1196,16 @@ class ComputerTool extends BaseBrowserToolExecutor {
           return createErrorResponse('ref is required for scroll_to action');
         }
         try {
-          await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
-          const resp = await this.sendMessageToTab(tab.id, {
-            action: 'focusByRef',
-            ref: params.ref,
-          });
+          const target = resolveRefTarget(params.ref, params.frameId);
+          await this.injectTreeHelper(tab.id, target.frameId);
+          const resp = await this.sendMessageToTab(
+            tab.id,
+            {
+              action: 'focusByRef',
+              ref: target.ref,
+            },
+            target.frameId,
+          );
           if (!resp || resp.success !== true) {
             return createErrorResponse(resp?.error || 'scroll_to failed: element not found');
           }
