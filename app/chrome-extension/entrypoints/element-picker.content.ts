@@ -194,8 +194,9 @@ export default defineContentScript({
     // Register message listener
     chrome.runtime.onMessage.addListener(handleMessage);
 
-    // Cleanup on page unload
-    window.addEventListener('unload', () => {
+    // Cleanup on page teardown. `pagehide` rather than `unload`: Chrome is phasing out
+    // unload and some documents (e.g. loopback panel pages) block it by policy.
+    window.addEventListener('pagehide', () => {
       chrome.runtime.onMessage.removeListener(handleMessage);
       controller?.dispose();
       controller = null;
