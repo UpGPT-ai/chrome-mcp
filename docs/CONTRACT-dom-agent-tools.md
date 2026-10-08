@@ -105,3 +105,121 @@ g. **Audit log.** Append-only local JSONL at ~/.chrome-mcp-agent/audit.log: time
 (values of fill/cookies redacted), result ok/error. Rotate at 5MB. `chrome_audit_log` tool to read the last N entries.
 h. **Bridge.** Put /agent/\* behind the bearer token if the extension UI can be given it; otherwise document why not.
 Tests: pure-function tests for a, b, c (pattern matching), e, f. Report which tools were wrapped.
+
+---
+
+## Addendum: gap-closing tools (items 9-14)
+
+Build after item 7, before item 8 (item 8 gates all of them). Every tool that uses the
+`chrome.debugger` API must go through one shared helper that attaches, runs, and detaches,
+and must fail clearly if DevTools is already attached to the tab.
+
+Shared pure logic goes in `packages/shared/src/*.ts` with a jest test in `app/native-server/src/`.
+Registration follows the same pattern as items 1-6.
+
+### Item 9: file chooser interception (`chrome_file_chooser`)
+
+- CDP: `Page.setInterceptFileChooserDialog`, then `DOM.setFileInputFiles` with `backendNodeId`.
+- Input: `ref` or selector of the control to click, `paths: string[]`.
+- Flow: enable interception, click the control, receive `Page.fileChooserOpened`, set files, disable.
+- Default ON. Paths must be absolute; reject anything outside an allow-list directory when
+  item 8 policy is set.
+
+### Item 10: pierce closed shadow roots and cross-origin frames
+
+- Add `pierce: true` option to `chrome_snapshot`, implemented via CDP `DOM.getDocument`
+  with `pierce: true`, plus `Target.setAutoAttach` for out-of-process frames.
+- Refs from this path use a `cdp_N` prefix and are resolved through `DOM.resolveNode`.
+- Default ON as an opt-in parameter. Falls back to the current path when CDP is unavailable.
+
+### Item 11: print to PDF (`chrome_print_pdf`)
+
+- CDP: `Page.printToPDF`. Input: `tabId`, `landscape`, `printBackground`, `pageRanges`, `savePath`.
+- Writes via the native bridge to the downloads directory, returns the file path and byte size.
+- Default ON.
+
+### Item 12: site permissions (`chrome_grant_permission`)
+
+- CDP: `Browser.grantPermissions` and `Browser.resetPermissions`.
+- Input: `origin`, `permissions: string[]` (camera, microphone, geolocation, notifications,
+  clipboardReadWrite). Also supports `reset`.
+- Default OFF. Requires item 8 site policy to list the origin. Every grant is audit-logged.
+
+### Item 13: clipboard (`chrome_clipboard`)
+
+- Actions: `read`, `write`. Uses `navigator.clipboard` in the page, with `Browser.grantPermissions`
+  for `clipboardReadWrite` on the current origin if needed.
+- Default OFF. Read results pass through the item 8 untrusted-content envelope.
+  Every call is audit-logged.
+
+### Item 14: human handoff (`chrome_request_human`)
+
+- For CAPTCHAs, passkeys, security keys, and hardware prompts. No bypass logic of any kind.
+- Highlights an optional element, shows a banner "Waiting for you", then waits for the user to
+  click Done or for `timeoutMs`. Returns `{resumed: true|false}`.
+- Reuse the existing element-selection overlay. Default ON.
+
+### Gates
+
+Same three gates as items 1-6. Unit tests cover argument validation and the pure helpers.
+Live CDP behaviour is verified manually by the lead, not by jest.
+
+---
+
+## Addendum 2: port, recorder, full rebrand (items 15-17)
+
+### Item 15: new default port (do this FIRST after item 5 is committed)
+
+- 12306 is the upstream mcp-chrome default, so two installs collide. New default: **18306**
+  (below the OS ephemeral range, not a well-known service port).
+- Single source of truth: `DEFAULT_SERVER_PORT` in `packages/shared/src/constants.ts`.
+  Replace the hard-coded copies in `app/chrome-extension/common/constants.ts`,
+  `entrypoints/popup/App.vue`, `entrypoints/background/web-editor/index.ts`,
+  `app/native-server/src/constant/index.ts`, `native-messaging-host.ts`, `agent/tool-bridge.ts`,
+  `mcp/stdio-config.json`, `scripts/doctor.ts`, `_locales/en/messages.json`, README,
+  `docs/*`, `packaging-template/README.md`, and the `local-auth` test.
+- Env override `CHROME_MCP_PORT` honoured by the bridge and by `doctor`.
+- If the port is busy, fail with a clear message naming the process; never silently pick another.
+- Migration: the popup detects a bridge on the old port 12306 and shows a one-line notice
+  with the new MCP config. Existing user configs must be updated by hand; document it.
+
+### Item 16: DOM-semantic recorder (enable the stubbed Record & Replay)
+
+- Upstream ships `inject-scripts/recorder.js` and `background/record-replay/recording/*`, but
+  the popup start/stop handlers are stubbed ("in development"). Un-stub and finish it.
+- Record **DOM intent, not mouse/keyboard coordinates**. Each step stores: action
+  (click, fill, select, check, navigate, submit, key), a semantic locator (role + accessible name,
+  label, name/id, text, stable CSS as fallback, frame path), the value, the URL, and the page
+  state before/after (reuse the item 3 observe diff). Never store raw mouse paths.
+- Do not record values typed into password fields, or fields whose autocomplete is a
+  payment or one-time code. Store `{secret: true}` and prompt at replay time.
+- Replay resolves locators through the same ref machinery as `chrome_snapshot`, with a
+  fallback ladder and a clear "step N could not be found" error.
+- New MCP tools: `chrome_recording` (start, stop, status), `chrome_flow_list`, `chrome_flow_run`
+  (with `params` overrides), `chrome_flow_export` (emit the step list as a plain JSON array of
+  tool calls an agent can read and edit).
+- Recording runs only on the active tab by user action in the popup; default OFF for agents.
+  Starting a recording from an agent call requires the item 8 site policy.
+- Optional later: UpLink interop. Flow JSON format is versioned so the UpLink extension can
+  import and export the same files.
+
+### Item 17: full rebrand of every extension window (after item 16)
+
+Scope: popup, options, welcome, sidepanel, builder, quick-panel, web-editor-v2 overlay,
+element picker overlay, and the confirm dialogs. The old purple/upstream look must be gone.
+
+- Design tokens in one file `entrypoints/styles/tokens.css`, light and dark via
+  `prefers-color-scheme`. Primary `226 63% 33%`, accent `217 91% 60%`, neutral slate scale,
+  semantic success/warn/danger. No hard-coded colours outside the tokens file.
+- New icon set (single SVG family, 1.5px stroke, 16/20/24), replacing every upstream icon.
+- Popup header: UpGPT mark and "Chrome MCP" name, connection status pill, version.
+- **MCP server configuration lives in a collapsed `<details>` block** (closed by default):
+  server URL, port, auth token location, copy buttons for Claude Code, Claude Desktop,
+  Cursor, and generic JSON snippets.
+- Sections: Status, Tools (with toggles for high-risk tools), Recording and Flows,
+  Site policy (item 8), About. Footer: "Open source, MIT, built by UpGPT.ai" with links.
+- Remove the "coming soon" tooltips and the upstream branding, links and strings
+  (locale files included). Keep upstream attribution in LICENSE and README only.
+- Accessibility: focus rings, contrast AA in both themes, keyboard operable.
+- Work in slices: tokens, then shared components, then popup, then each other window. Gates
+  after each slice. Final check is a screenshot pass by the lead in both themes.
