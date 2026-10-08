@@ -93,6 +93,73 @@
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   }
 
+  function probeSelector(selector) {
+    try {
+      const el = document.querySelector(selector);
+      if (!el) return { found: false };
+      return { found: isVisible(el) };
+    } catch (e) {
+      return { error: 'invalid selector: ' + selector };
+    }
+  }
+
+  function refIsConnected(ref) {
+    try {
+      const map = window.__claudeElementMap;
+      const weak = map && map[ref];
+      const el = weak && typeof weak.deref === 'function' ? weak.deref() : null;
+      return !!(el && el.isConnected);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function ensureDomQuietTracker() {
+    if (window.__waitDomTracker) return;
+    window.__waitDomTracker = true;
+    window.__waitDomLastMutation = Date.now();
+    try {
+      const obs = new MutationObserver(() => {
+        window.__waitDomLastMutation = Date.now();
+      });
+      obs.observe(document.documentElement || document, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+    } catch (e) {}
+  }
+
+  function checkWaitState(request) {
+    if (request.trackDomQuiet) ensureDomQuietTracker();
+    const out = { success: true };
+    const text = typeof request.text === 'string' ? request.text : '';
+    const textGone = typeof request.textGone === 'string' ? request.textGone : '';
+    const selector = typeof request.selector === 'string' ? request.selector : '';
+    const selectorGone = typeof request.selectorGone === 'string' ? request.selectorGone : '';
+    const ref = typeof request.ref === 'string' ? request.ref : '';
+    const refGone = typeof request.refGone === 'string' ? request.refGone : '';
+    if (text) out.textFound = !!findElementByText(text);
+    if (textGone) out.textGoneFound = !!findElementByText(textGone);
+    if (selector) {
+      const probed = probeSelector(selector);
+      if (probed.error) return { success: false, error: probed.error };
+      out.selectorFound = probed.found;
+    }
+    if (selectorGone) {
+      const probed = probeSelector(selectorGone);
+      if (probed.error) return { success: false, error: probed.error };
+      out.selectorGoneFound = probed.found;
+    }
+    if (ref) out.refConnected = refIsConnected(ref);
+    if (refGone) out.refGoneConnected = refIsConnected(refGone);
+    if (request.trackDomQuiet) {
+      out.domQuietForMs = Date.now() - (window.__waitDomLastMutation || Date.now());
+    }
+    return out;
+  }
+
   function waitFor({ text, appear = true, timeout = 5000 }) {
     return new Promise((resolve) => {
       const start = Date.now();
@@ -199,8 +266,15 @@
 
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     try {
-      if (request && request.action === 'wait_helper_ping') {
+      if (
+        request &&
+        (request.action === 'wait_helper_ping' || request.action === 'chrome_wait_for_ping')
+      ) {
         sendResponse({ status: 'pong' });
+        return false;
+      }
+      if (request && request.action === 'checkWaitState') {
+        sendResponse(checkWaitState(request));
         return false;
       }
       if (request && request.action === 'waitForText') {

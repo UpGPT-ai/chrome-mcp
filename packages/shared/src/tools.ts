@@ -45,6 +45,7 @@ export const TOOL_NAMES = {
     FILE_UPLOAD: 'chrome_upload_file',
     READ_PAGE: 'chrome_read_page',
     SNAPSHOT: 'chrome_snapshot',
+    WAIT_FOR: 'chrome_wait_for',
     COMPUTER: 'chrome_computer',
     HANDLE_DIALOG: 'chrome_handle_dialog',
     HANDLE_DOWNLOAD: 'chrome_handle_download',
@@ -250,6 +251,80 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Snapshot this frame only. Use it to read a cross-origin iframe when the extension has host access. Same-origin frames are included automatically and their refs look like ref_12@frameId.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.WAIT_FOR,
+    description:
+      'Wait until a page condition is met. Conditions: text, textGone, selector, selectorGone, ref, refGone, urlMatches (regex), networkIdleMs (no requests for N ms), and domQuietMs. By default any one condition is enough. Pass all:true to require every condition. Returns {met, waitedMs}, or a timeout that names the unmet conditions.\nPreferred order: chrome_snapshot, act by ref with observe:true, then read the diff. Use chrome_wait_for when the next step depends on one of these conditions. Screenshot only if layout matters.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description:
+            'Wait until this text is visible (matched by wait-helper, case-insensitive).',
+        },
+        textGone: {
+          type: 'string',
+          description: 'Wait until this text is no longer visible.',
+        },
+        selector: {
+          type: 'string',
+          description: 'CSS selector that must match a visible element.',
+        },
+        selectorGone: {
+          type: 'string',
+          description: 'CSS selector that must no longer match a visible element.',
+        },
+        ref: {
+          type: 'string',
+          description:
+            'Element ref from chrome_snapshot or chrome_read_page that must still be connected. Iframe refs look like ref_12@frameId.',
+        },
+        refGone: {
+          type: 'string',
+          description: 'Element ref that must be detached or no longer mapped.',
+        },
+        urlMatches: {
+          type: 'string',
+          description:
+            'Regular expression source tested against the tab URL. Example: example\\.com/dashboard',
+        },
+        networkIdleMs: {
+          type: 'number',
+          description:
+            'Succeed after this many milliseconds with no new, completed, or failed requests on the tab. Must be > 0 and no greater than timeoutMs.',
+        },
+        domQuietMs: {
+          type: 'number',
+          description:
+            'Succeed after this many milliseconds with no DOM mutations. Must be > 0 and no greater than timeoutMs.',
+        },
+        all: {
+          type: 'boolean',
+          description:
+            'When true, every provided condition must be met. When false or omitted, return as soon as any condition is met.',
+        },
+        timeoutMs: {
+          type: 'number',
+          description: 'How long to wait in milliseconds (default 10000, max 60000).',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target an existing tab by ID (default: active tab).',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Target window ID to pick the active tab when tabId is omitted.',
+        },
+        frameId: {
+          type: 'number',
+          description:
+            'Frame for text, selector, ref, and DOM-quiet checks. A ref suffix like ref_12@frameId selects the same frame.',
         },
       },
       required: [],
