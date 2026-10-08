@@ -10,3 +10,4 @@ export * from './node-specs-builtin';
 export * from './agent-types';
 export * from './snapshot-diff';
 export * from './snapshot-frames';
+export * from './observe-diff';

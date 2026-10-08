@@ -1,9 +1,10 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, parseObserve } from 'chrome-mcp-shared';
 import { ERROR_MESSAGES, TIMEOUTS } from '@/common/constants';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { clickTool, fillTool, resolveRefTarget } from './interaction';
+import { attachObserve, beginObserve, type ObserveSession } from './observe';
 import { keyboardTool } from './keyboard';
 import { screenshotTool } from './screenshot';
 import { screenshotContextManager, scaleCoordinates } from '@/utils/screenshot-context';
@@ -75,6 +76,7 @@ interface ComputerParams {
   tabId?: number; // target existing tab id
   windowId?: number;
   background?: boolean; // avoid focusing/activating
+  observe?: boolean | { settleMs?: number };
 }
 
 // Minimal CDP helper encapsulated here to avoid scattering CDP code
@@ -226,11 +228,19 @@ class ComputerTool extends BaseBrowserToolExecutor {
     const params = args || ({} as ComputerParams);
     if (!params.action) return createErrorResponse('Action parameter is required');
 
+    const observe = parseObserve(params.observe);
+    if (observe && 'error' in observe) {
+      return createErrorResponse(`${ERROR_MESSAGES.INVALID_PARAMETERS}: ${observe.error}`);
+    }
+
+    let session: ObserveSession | null = null;
     try {
       const explicit = await this.tryGetTab(args.tabId);
       const tab = explicit || (await this.getActiveTabOrThrowInWindow(args.windowId));
       if (!tab.id)
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
+
+      if (observe) session = await beginObserve(tab.id, observe.settleMs);
 
       // Execute the action and capture frame on success
       const result = await this.executeAction(params, tab);
@@ -263,11 +273,14 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
       }
 
-      return result;
+      return attachObserve(session, result);
     } catch (error) {
       console.error('Error in computer tool:', error);
-      return createErrorResponse(
-        `Failed to execute action: ${error instanceof Error ? error.message : String(error)}`,
+      return attachObserve(
+        session,
+        createErrorResponse(
+          `Failed to execute action: ${error instanceof Error ? error.message : String(error)}`,
+        ),
       );
     }
   }

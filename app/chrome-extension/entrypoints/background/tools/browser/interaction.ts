@@ -1,6 +1,7 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES, parseAgentRef } from 'chrome-mcp-shared';
+import { TOOL_NAMES, parseAgentRef, parseObserve } from 'chrome-mcp-shared';
+import { attachObserve, beginObserve, type ObserveSession } from './observe';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { TIMEOUTS, ERROR_MESSAGES } from '@/common/constants';
 
@@ -24,6 +25,7 @@ interface ClickToolParams {
   modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean };
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
+  observe?: boolean | { settleMs?: number };
 }
 
 /**
@@ -74,6 +76,12 @@ class ClickTool extends BaseBrowserToolExecutor {
       );
     }
 
+    const observe = parseObserve(args.observe);
+    if (observe && 'error' in observe) {
+      return createErrorResponse(`${ERROR_MESSAGES.INVALID_PARAMETERS}: ${observe.error}`);
+    }
+
+    let session: ObserveSession | null = null;
     try {
       // Resolve tab
       const explicit = await this.tryGetTab(args.tabId);
@@ -122,6 +130,8 @@ class ClickTool extends BaseBrowserToolExecutor {
         }
       }
 
+      if (observe) session = await beginObserve(tab.id, observe.settleMs);
+
       await this.injectContentScript(
         tab.id,
         ['inject-scripts/click-helper.js'],
@@ -162,7 +172,7 @@ class ClickTool extends BaseBrowserToolExecutor {
         clickMethod = 'unknown';
       }
 
-      return {
+      return attachObserve(session, {
         content: [
           {
             type: 'text',
@@ -176,11 +186,14 @@ class ClickTool extends BaseBrowserToolExecutor {
           },
         ],
         isError: false,
-      };
+      });
     } catch (error) {
       console.error('Error in click operation:', error);
-      return createErrorResponse(
-        `Error performing click: ${error instanceof Error ? error.message : String(error)}`,
+      return attachObserve(
+        session,
+        createErrorResponse(
+          `Error performing click: ${error instanceof Error ? error.message : String(error)}`,
+        ),
       );
     }
   }
@@ -197,6 +210,7 @@ interface FillToolParams {
   frameId?: number;
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
+  observe?: boolean | { settleMs?: number };
 }
 
 /**
@@ -221,6 +235,12 @@ class FillTool extends BaseBrowserToolExecutor {
       return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': Value must be provided');
     }
 
+    const observe = parseObserve(args.observe);
+    if (observe && 'error' in observe) {
+      return createErrorResponse(`${ERROR_MESSAGES.INVALID_PARAMETERS}: ${observe.error}`);
+    }
+
+    let session: ObserveSession | null = null;
     try {
       const explicit = await this.tryGetTab(args.tabId);
       const tab = explicit || (await this.getActiveTabOrThrowInWindow(args.windowId));
@@ -268,6 +288,8 @@ class FillTool extends BaseBrowserToolExecutor {
         }
       }
 
+      if (observe) session = await beginObserve(tab.id, observe.settleMs);
+
       await this.injectContentScript(
         tab.id,
         ['inject-scripts/fill-helper.js'],
@@ -290,10 +312,10 @@ class FillTool extends BaseBrowserToolExecutor {
       );
 
       if (result && result.error) {
-        return createErrorResponse(result.error);
+        return attachObserve(session, createErrorResponse(result.error));
       }
 
-      return {
+      return attachObserve(session, {
         content: [
           {
             type: 'text',
@@ -305,11 +327,14 @@ class FillTool extends BaseBrowserToolExecutor {
           },
         ],
         isError: false,
-      };
+      });
     } catch (error) {
       console.error('Error in fill operation:', error);
-      return createErrorResponse(
-        `Error filling element: ${error instanceof Error ? error.message : String(error)}`,
+      return attachObserve(
+        session,
+        createErrorResponse(
+          `Error filling element: ${error instanceof Error ? error.message : String(error)}`,
+        ),
       );
     }
   }

@@ -1,0 +1,102 @@
+/**
+ * Pure observe-diff assembly. Browser code collects the before/after facts;
+ * this module decides what the agent sees.
+ */
+
+import { capSnapshotDiff, diffSnapshotLines, type SnapshotLineDiff } from './snapshot-diff';
+
+export const OBSERVE_SETTLE_DEFAULT_MS = 300;
+export const OBSERVE_SETTLE_MAX_MS = 3000;
+export const OBSERVE_REQUEST_CAP = 20;
+export const OBSERVE_CONSOLE_CAP = 10;
+export const OBSERVE_DOM_CAP = 40;
+
+export interface ObservePair {
+  before: string;
+  after: string;
+}
+
+export interface ObserveRequest {
+  method: string;
+  url: string;
+  status: number;
+}
+
+export interface ObserveDiff {
+  url: ObservePair | null;
+  title: ObservePair | null;
+  domChanges: SnapshotLineDiff;
+  newRequests: ObserveRequest[];
+  newConsoleErrors: string[];
+  dialogOpened: boolean;
+}
+
+export interface ObserveFacts {
+  urlBefore: string;
+  urlAfter: string;
+  titleBefore: string;
+  titleAfter: string;
+  linesBefore: readonly string[];
+  linesAfter: readonly string[];
+  requests: readonly ObserveRequest[];
+  consoleErrors: readonly string[];
+  dialogOpened: boolean;
+}
+
+export function parseObserve(value: unknown): { settleMs: number } | { error: string } | null {
+  if (value === undefined || value === null || value === false) return null;
+  if (value === true) return { settleMs: OBSERVE_SETTLE_DEFAULT_MS };
+  if (typeof value !== 'object') {
+    return { error: 'observe must be true or { settleMs }' };
+  }
+  const raw = (value as { settleMs?: unknown }).settleMs;
+  if (raw === undefined) return { settleMs: OBSERVE_SETTLE_DEFAULT_MS };
+  const settle = Number(raw);
+  if (!Number.isFinite(settle) || settle < 0) {
+    return { error: 'observe.settleMs must be a non-negative number' };
+  }
+  return { settleMs: Math.min(OBSERVE_SETTLE_MAX_MS, Math.floor(settle)) };
+}
+
+export function changedPair(before: string, after: string): ObservePair | null {
+  if (before === after) return null;
+  return { before, after };
+}
+
+/**
+ * Strings present in `after` that are not accounted for by `before`.
+ * Repeated identical messages are matched one-for-one.
+ */
+export function newStringEntries(
+  before: readonly string[],
+  after: readonly string[],
+  cap: number = OBSERVE_CONSOLE_CAP,
+): string[] {
+  const counts = new Map<string, number>();
+  for (const text of before) counts.set(text, (counts.get(text) || 0) + 1);
+  const fresh: string[] = [];
+  for (const text of after) {
+    const left = counts.get(text) || 0;
+    if (left > 0) {
+      counts.set(text, left - 1);
+      continue;
+    }
+    fresh.push(text);
+  }
+  const limit = Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : OBSERVE_CONSOLE_CAP;
+  return fresh.slice(0, limit);
+}
+
+export function buildObserveDiff(facts: ObserveFacts): ObserveDiff {
+  return {
+    url: changedPair(facts.urlBefore, facts.urlAfter),
+    title: changedPair(facts.titleBefore, facts.titleAfter),
+    domChanges: capSnapshotDiff(
+      diffSnapshotLines(facts.linesBefore, facts.linesAfter),
+      OBSERVE_DOM_CAP,
+    ),
+    newRequests: facts.requests.slice(0, OBSERVE_REQUEST_CAP),
+    newConsoleErrors: facts.consoleErrors.slice(0, OBSERVE_CONSOLE_CAP),
+    dialogOpened: facts.dialogOpened === true,
+  };
+}

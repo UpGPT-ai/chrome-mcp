@@ -258,7 +258,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.COMPUTER,
     description:
-      "Use a mouse and keyboard to interact with a web browser, and take screenshots.\n* Whenever you intend to click on an element like an icon, you should consult a read_page to determine the ref of the element before moving the cursor.\n* If you tried clicking on a program or link but it failed to load, even after waiting, try screenshot and then adjusting your click location so that the tip of the cursor visually falls on the element that you want to click.\n* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.",
+      "Use a mouse and keyboard to interact with a web browser, and take screenshots.\nPreferred order: chrome_snapshot, act by ref with observe:true, then read the diff. Take a screenshot only when layout or pixels matter.\n* Whenever you intend to click on an element like an icon, you should consult a snapshot or read_page to determine the ref of the element before moving the cursor.\n* If you tried clicking on a program or link but it failed to load, even after waiting, try screenshot and then adjusting your click location so that the tip of the cursor visually falls on the element that you want to click.\n* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -377,6 +377,10 @@ export const TOOL_SCHEMAS: Tool[] = [
         duration: {
           type: 'number',
           description: 'Seconds to wait for action=wait (max 30s)',
+        },
+        observe: {
+          description:
+            'After the action, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
         },
       },
       required: ['action'],
@@ -941,7 +945,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.CLICK,
     description:
-      'Click on an element in a web page. Supports multiple targeting methods: CSS selector, XPath, element ref (from chrome_read_page), or viewport coordinates. More focused than chrome_computer for simple click operations.',
+      'Click on an element in a web page. Supports CSS selector, XPath, an element ref (from chrome_snapshot or chrome_read_page), or viewport coordinates. Preferred order: chrome_snapshot, click by ref with observe:true, then read the diff. Screenshot only if layout matters.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1007,6 +1011,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Target frame ID for iframe support.',
         },
+        observe: {
+          description:
+            'After the click, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
+        },
       },
       required: [],
     },
@@ -1014,7 +1022,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.FILL,
     description:
-      'Fill or select a form element on a web page. Supports input, textarea, select, checkbox, and radio elements. Use CSS selector, XPath, or element ref to target the element.',
+      'Fill or select a form element on a web page. Supports input, textarea, select, checkbox, and radio elements. Use a CSS selector, XPath, or an element ref. Preferred order: chrome_snapshot, fill by ref with observe:true, then read the diff. Screenshot only if layout matters.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1048,6 +1056,10 @@ export const TOOL_SCHEMAS: Tool[] = [
         frameId: {
           type: 'number',
           description: 'Target frame ID for iframe support.',
+        },
+        observe: {
+          description:
+            'After the fill, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
         },
       },
       required: ['value'],
