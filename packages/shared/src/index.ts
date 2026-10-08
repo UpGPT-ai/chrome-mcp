@@ -12,3 +12,4 @@ export * from './snapshot-diff';
 export * from './snapshot-frames';
 export * from './observe-diff';
 export * from './wait-conditions';
+export * from './fill-form';

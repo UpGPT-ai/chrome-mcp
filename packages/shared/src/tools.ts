@@ -24,6 +24,7 @@ export const TOOL_NAMES = {
     WEB_FETCHER: 'chrome_get_web_content',
     CLICK: 'chrome_click_element',
     FILL: 'chrome_fill_or_select',
+    FILL_FORM: 'chrome_fill_form',
     REQUEST_ELEMENT_SELECTION: 'chrome_request_element_selection',
     GET_INTERACTIVE_ELEMENTS: 'chrome_get_interactive_elements',
     NETWORK_CAPTURE: 'chrome_network_capture',
@@ -1138,6 +1139,71 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['value'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FILL_FORM,
+    description:
+      'Fill several form fields, then report HTML5 and aria validation. Each field uses a ref, label, name, or CSS selector. Label matching uses the label text, aria-label, aria-labelledby, and placeholder. Handles text, checkbox, radio, select, date, and contenteditable. submit:true submits the form and appends a diff; submit:{ref} activates that control.\nPreferred order: chrome_snapshot, fill by ref with chrome_fill_form or chrome_fill_or_select observe:true, then read the diff. Screenshot only if layout matters.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fields: {
+          type: 'array',
+          description: 'Fields to fill, in order. At most 50.',
+          items: {
+            type: 'object',
+            properties: {
+              ref: {
+                type: 'string',
+                description:
+                  'Element ref from chrome_snapshot or chrome_read_page. Iframe refs look like ref_12@frameId. Wins over selector, label, and name.',
+              },
+              label: {
+                type: 'string',
+                description:
+                  'Accessible name. Matches label text, aria-label, aria-labelledby, or placeholder.',
+              },
+              name: {
+                type: 'string',
+                description: 'Control name or id.',
+              },
+              selector: {
+                type: 'string',
+                description: 'CSS selector for the control. Used when ref is omitted.',
+              },
+              type: {
+                type: 'string',
+                description:
+                  'Optional type to disambiguate matches: text, email, checkbox, radio, select, date, contenteditable.',
+              },
+              value: {
+                description:
+                  'Value to set. Text, date (YYYY-MM-DD), and select option value or visible text are strings. Checkbox accepts a boolean. An empty string clears a text control.',
+              },
+            },
+            required: ['value'],
+          },
+        },
+        submit: {
+          description:
+            'After every field fills, submit and append diff. true uses the form requestSubmit. {ref} clicks that submit control. Omitted does not submit. Submit is skipped when any field fails.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target an existing tab by ID (default: active tab).',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Target window ID to pick the active tab when tabId is omitted.',
+        },
+        frameId: {
+          type: 'number',
+          description:
+            'Frame for fields that do not encode one in the ref. A ref suffix like ref_12@frameId selects that frame.',
+        },
+      },
+      required: ['fields'],
     },
   },
   {

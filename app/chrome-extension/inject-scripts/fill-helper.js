@@ -59,6 +59,300 @@ if (window.__FILL_HELPER_INITIALIZED__) {
     return null;
   }
 
+  function setNativeValue(element, value) {
+    const prototype = element ? Object.getPrototypeOf(element) : null;
+    const descriptor =
+      (prototype && Object.getOwnPropertyDescriptor(prototype, 'value')) ||
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value') ||
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value') ||
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+    const setter = descriptor && descriptor.set;
+    if (setter) setter.call(element, value);
+    else element.value = value;
+  }
+
+  function setNativeChecked(element, checked) {
+    const prototype = element ? Object.getPrototypeOf(element) : null;
+    const descriptor =
+      (prototype && Object.getOwnPropertyDescriptor(prototype, 'checked')) ||
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+    const setter = descriptor && descriptor.set;
+    if (setter) setter.call(element, checked);
+    else element.checked = checked;
+  }
+
+  function isContentEditableHost(element) {
+    if (!element || element.nodeType !== 1 || !element.getAttribute) return false;
+    const attr = element.getAttribute('contenteditable');
+    return attr === '' || attr === 'true' || attr === 'plaintext-only';
+  }
+
+  function setContentEditableText(element, text) {
+    element.focus();
+    try {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      if (document.execCommand) document.execCommand('insertText', false, text);
+    } catch (_) {
+      /* fall through to textContent */
+    }
+    if ((element.textContent || '') !== text) element.textContent = text;
+  }
+
+  function isListedControl(element) {
+    if (!element || element.nodeType !== 1) return false;
+    if (isContentEditableHost(element)) return true;
+    if (element.tagName === 'TEXTAREA' || element.tagName === 'SELECT') return true;
+    if (element.tagName === 'INPUT') {
+      const skip = ['hidden', 'file', 'button', 'submit', 'reset', 'image'];
+      return skip.indexOf(element.type) === -1;
+    }
+    return false;
+  }
+
+  function derefRef(ref) {
+    try {
+      const map = window.__claudeElementMap;
+      const weak = map && map[ref];
+      const el = weak && typeof weak.deref === 'function' ? weak.deref() : null;
+      return el instanceof Element ? el : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function ensureRef(element) {
+    if (!window.__claudeElementMap) window.__claudeElementMap = {};
+    if (!window.__claudeRefCounter) window.__claudeRefCounter = 0;
+    const map = window.__claudeElementMap;
+    for (const key in map) {
+      const weak = map[key];
+      if (weak && typeof weak.deref === 'function' && weak.deref() === element) return key;
+    }
+    const refId = 'ref_' + ++window.__claudeRefCounter;
+    map[refId] = new WeakRef(element);
+    return refId;
+  }
+
+  function clipText(value) {
+    const text = String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.length > 180 ? text.slice(0, 180) : text;
+  }
+
+  function controlType(element) {
+    if (isContentEditableHost(element)) return 'contenteditable';
+    if (element.tagName === 'SELECT') return 'select';
+    if (element.tagName === 'TEXTAREA') return 'textarea';
+    if (element.tagName === 'INPUT') return element.type || 'text';
+    return (element.tagName || '').toLowerCase();
+  }
+
+  function candidateFor(element) {
+    const labels = [];
+    try {
+      const owned = element.labels ? Array.from(element.labels) : [];
+      for (let i = 0; i < owned.length; i++) {
+        const text = clipText(owned[i].innerText || owned[i].textContent || '');
+        if (text) labels.push(text);
+      }
+    } catch (_) {
+      /* labels is unsupported on some elements */
+    }
+    const aria = clipText(element.getAttribute && element.getAttribute('aria-label'));
+    if (aria) labels.push(aria);
+    const labelledBy = element.getAttribute && element.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const ids = String(labelledBy).split(/\s+/);
+      for (let i = 0; i < ids.length; i++) {
+        const node = ids[i] ? document.getElementById(ids[i]) : null;
+        const text = node ? clipText(node.innerText || node.textContent || '') : '';
+        if (text) labels.push(text);
+      }
+    }
+    return {
+      ref: ensureRef(element),
+      id: element.id || '',
+      name: element.name || '',
+      type: controlType(element),
+      tag: (element.tagName || '').toLowerCase(),
+      labels: labels.slice(0, 6),
+      placeholder: clipText(element.getAttribute && element.getAttribute('placeholder')),
+    };
+  }
+
+  function walkElements(visit) {
+    const stack = [];
+    const seen = new Set();
+    if (document.documentElement) stack.push(document.documentElement);
+    let count = 0;
+    while (stack.length && count < 4000) {
+      const node = stack.pop();
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+      count++;
+      if (node.nodeType === 1) visit(node);
+      const children = node.children || [];
+      for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+      try {
+        if (node.shadowRoot) stack.push(node.shadowRoot);
+      } catch (_) {
+        /* closed or inaccessible shadow */
+      }
+    }
+  }
+
+  function listFormCandidates() {
+    const candidates = [];
+    walkElements((element) => {
+      if (!isListedControl(element)) return;
+      if (candidates.length >= 400) return;
+      candidates.push(candidateFor(element));
+    });
+    return candidates;
+  }
+
+  function resolveSelectorRef(selector) {
+    const element = querySelectorDeep(selector);
+    if (!element) return { error: 'selector did not match an element' };
+    const target = isListedControl(element) ? element : findInnerFillable(element);
+    if (!target) return { error: 'selector did not match a fillable element' };
+    return candidateFor(target);
+  }
+
+  function findInnerFillable(root) {
+    const queue = [root];
+    const seen = new Set();
+    while (queue.length) {
+      const current = queue.shift();
+      if (!current || seen.has(current)) continue;
+      seen.add(current);
+      if (current !== root && isListedControl(current)) return current;
+      const children = current.children || [];
+      for (let i = 0; i < children.length; i++) queue.push(children[i]);
+      try {
+        const shadow = current.shadowRoot;
+        if (shadow && shadow.children) {
+          for (let i = 0; i < shadow.children.length; i++) queue.push(shadow.children[i]);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
+  function validityFact(element) {
+    let nativeValid = true;
+    let validationMessage = '';
+    try {
+      if (element.validity && typeof element.validity.valid === 'boolean') {
+        nativeValid = element.validity.valid;
+      }
+      if (typeof element.validationMessage === 'string') {
+        validationMessage = element.validationMessage;
+      }
+    } catch (_) {
+      /* contenteditable has no validity */
+    }
+    const ariaInvalid = element.getAttribute ? element.getAttribute('aria-invalid') : null;
+    let ariaErrorMessage = '';
+    const errId = element.getAttribute && element.getAttribute('aria-errormessage');
+    if (errId) {
+      const node = document.getElementById(errId);
+      ariaErrorMessage = node ? clipText(node.innerText || node.textContent || '') : '';
+    }
+    return {
+      ref: ensureRef(element),
+      valid: nativeValid,
+      validationMessage,
+      ariaInvalid,
+      ariaErrorMessage,
+    };
+  }
+
+  function readFormValidity(refs) {
+    const facts = [];
+    const seen = new Set();
+    const push = (element) => {
+      if (!element || seen.has(element)) return;
+      seen.add(element);
+      if (facts.length >= 80) return;
+      facts.push(validityFact(element));
+    };
+    const list = Array.isArray(refs) ? refs : [];
+    for (let i = 0; i < list.length; i++) push(derefRef(list[i]));
+    walkElements((element) => {
+      if (!element || element.nodeType !== 1 || !element.matches) return;
+      let marked = false;
+      try {
+        marked = element.matches(':invalid');
+      } catch (_) {
+        marked = false;
+      }
+      if (!marked && element.getAttribute) {
+        const aria = element.getAttribute('aria-invalid');
+        marked = aria === 'true' || aria === 'grammar' || aria === 'spelling';
+      }
+      if (marked) push(element);
+    });
+    return facts;
+  }
+
+  async function applyFormFills(items) {
+    const results = [];
+    const refs = [];
+    const list = Array.isArray(items) ? items : [];
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i] || {};
+      const filled = await fillElement(null, item.value, item.ref);
+      if (filled && filled.error) results.push({ ref: item.ref, error: filled.error });
+      else {
+        results.push({ ref: item.ref, ok: true });
+        if (item.ref) refs.push(item.ref);
+      }
+    }
+    return { success: true, results, validity: readFormValidity(refs) };
+  }
+
+  function submitFilledForm(ref) {
+    const target = ref ? derefRef(ref) : null;
+    if (
+      target &&
+      typeof target.click === 'function' &&
+      target.tagName !== 'FORM' &&
+      (target.tagName === 'BUTTON' ||
+        target.type === 'submit' ||
+        target.getAttribute('type') === 'submit')
+    ) {
+      target.click();
+      return { ok: true };
+    }
+    const form =
+      (target && target.tagName === 'FORM' && target) ||
+      (target && target.form) ||
+      document.querySelector('form');
+    if (!form) return { error: 'no form to submit' };
+    try {
+      if (typeof form.requestSubmit === 'function') {
+        const submitter = form.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitter) form.requestSubmit(submitter);
+        else form.requestSubmit();
+      } else {
+        form.submit();
+      }
+      return { ok: true };
+    } catch (error) {
+      return { error: error && error.message ? error.message : String(error) };
+    }
+  }
+
   function containsDeep(element, hit) {
     if (!element || !hit) return false;
     if (element === hit) return true;
@@ -114,6 +408,14 @@ if (window.__FILL_HELPER_INITIALIZED__) {
         };
       }
 
+      // Bring off-screen fields into view before the visibility check.
+      try {
+        element.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+      } catch (_) {
+        /* element may be detached */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
       // Get element information
       const rect = element.getBoundingClientRect();
       const elementInfo = {
@@ -139,6 +441,25 @@ if (window.__FILL_HELPER_INITIALIZED__) {
         return {
           error: `Element with selector "${selector}" is not visible`,
           elementInfo,
+        };
+      }
+
+      if (element.disabled || element.getAttribute('aria-disabled') === 'true') {
+        return { error: 'Element is disabled', elementInfo };
+      }
+
+      if (isContentEditableHost(element)) {
+        const text = String(value ?? '');
+        setContentEditableText(element, text);
+        element.dispatchEvent(
+          new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }),
+        );
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        element.blur();
+        return {
+          success: true,
+          message: 'Content editable filled',
+          elementInfo: { ...elementInfo, value: text },
         };
       }
 
@@ -223,10 +544,6 @@ if (window.__FILL_HELPER_INITIALIZED__) {
         };
       }
 
-      // Scroll element into view
-      element.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       // Focus the element
       element.focus();
 
@@ -249,7 +566,7 @@ if (window.__FILL_HELPER_INITIALIZED__) {
           };
         }
         const previous = element.checked;
-        element.checked = checkedVal;
+        setNativeChecked(element, checkedVal);
         element.focus();
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
@@ -264,7 +581,7 @@ if (window.__FILL_HELPER_INITIALIZED__) {
       if (element.tagName === 'INPUT' && element.type === 'radio') {
         // For radios, the selector/ref should target the specific input to select
         const previous = element.checked;
-        element.checked = true;
+        setNativeChecked(element, true);
         element.focus();
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
@@ -287,7 +604,7 @@ if (window.__FILL_HELPER_INITIALIZED__) {
           return { error: 'Range input requires a numeric value', elementInfo };
         }
         const previous = element.value;
-        element.value = String(numericValue);
+        setNativeValue(element, String(numericValue));
         element.focus();
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
@@ -304,7 +621,7 @@ if (window.__FILL_HELPER_INITIALIZED__) {
           return { error: 'Number input requires a numeric value', elementInfo };
         }
         const previous = element.value;
-        element.value = String(value ?? '');
+        setNativeValue(element, String(value ?? ''));
         element.focus();
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
@@ -321,8 +638,8 @@ if (window.__FILL_HELPER_INITIALIZED__) {
         // For select elements, find the option with matching value or text
         let optionFound = false;
         for (const option of element.options) {
-          if (option.value === value || option.text === value) {
-            element.value = option.value;
+          if (option.value === value || option.text === String(value)) {
+            setNativeValue(element, option.value);
             optionFound = true;
             break;
           }
@@ -335,16 +652,14 @@ if (window.__FILL_HELPER_INITIALIZED__) {
           };
         }
 
-        // Trigger change event
+        element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
-        // For input and textarea elements
-        // Clear the current value then set new value
-        element.value = '';
+        // For input and textarea elements. The native setter notifies React.
+        const text = String(value);
+        setNativeValue(element, '');
         element.dispatchEvent(new Event('input', { bubbles: true }));
-
-        element.value = String(value);
-
+        setNativeValue(element, text);
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
       }
@@ -416,8 +731,46 @@ if (window.__FILL_HELPER_INITIALIZED__) {
           });
         });
       return true; // Indicates async response
-    } else if (request.action === 'chrome_fill_or_select_ping') {
+    } else if (
+      request.action === 'chrome_fill_or_select_ping' ||
+      request.action === 'chrome_fill_form_ping'
+    ) {
       sendResponse({ status: 'pong' });
+      return false;
+    } else if (request.action === 'fillFormList') {
+      try {
+        sendResponse({ success: true, candidates: listFormCandidates() });
+      } catch (error) {
+        sendResponse({ error: error && error.message ? error.message : String(error) });
+      }
+      return false;
+    } else if (request.action === 'fillFormResolve') {
+      try {
+        sendResponse(resolveSelectorRef(request.selector));
+      } catch (error) {
+        sendResponse({ error: error && error.message ? error.message : String(error) });
+      }
+      return false;
+    } else if (request.action === 'fillFormApply') {
+      applyFormFills(request.items)
+        .then(sendResponse)
+        .catch((error) => {
+          sendResponse({ error: error && error.message ? error.message : String(error) });
+        });
+      return true;
+    } else if (request.action === 'fillFormValidity') {
+      try {
+        sendResponse({ success: true, validity: readFormValidity(request.refs) });
+      } catch (error) {
+        sendResponse({ error: error && error.message ? error.message : String(error) });
+      }
+      return false;
+    } else if (request.action === 'fillFormSubmit') {
+      try {
+        sendResponse(submitFilledForm(request.ref));
+      } catch (error) {
+        sendResponse({ error: error && error.message ? error.message : String(error) });
+      }
       return false;
     }
   });
