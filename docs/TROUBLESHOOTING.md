@@ -1,95 +1,72 @@
-# 🚀 Installation and Connection Issues
+# Troubleshooting
 
-## Quick Diagnosis
+First check: from the package folder run `node native-server/dist/cli.js doctor`. Every line should
+be `[OK]` once the extension is connected.
 
-Run the diagnostic tool to identify common issues:
+## "Already connected" or "port in use"
 
-```bash
-mcp-chrome-bridge doctor
-```
+The bridge listens on 127.0.0.1:13366 and does not move to another port. If that port is taken, it
+stops and prints the name of the process holding it. Either quit that process, or set
+`CHROME_MCP_PORT` to a free port and update your client URL. An old client config that still points
+at port 12306 must be edited by hand.
 
-To automatically fix common issues:
+Two Chrome profiles, or two copies of the extension, both trying to start a host will also collide.
+Keep one connected extension.
 
-```bash
-mcp-chrome-bridge doctor --fix
-```
+## Dynamic Client Registration rejected, HTTP 401
 
-## Export Report for GitHub Issues
+An error such as `Dynamic Client Registration rejected (HTTP 401): Unauthorized: missing or invalid
+bearer token` means the client sent no bearer token, or the wrong one. Add the header
+`Authorization: Bearer <contents of ~/.chrome-mcp-agent/auth-token>` to the client's HTTP server
+config. On Windows the file is `%USERPROFILE%\.chrome-mcp-agent\auth-token`. If the file did not
+exist, start the bridge (click Connect) so it creates one, then copy it.
 
-If you need to open an issue, export a diagnostic report:
+## Native host not found
 
-```bash
-# Print Markdown report to terminal (copy/paste into GitHub Issue)
-mcp-chrome-bridge report
+Chrome says "Specified native messaging host not found" or the popup shows "Connected, Service Not
+Started".
 
-# Write to a file
-mcp-chrome-bridge report --output mcp-report.md
+- Re-run the installer from the package folder so the manifest is written again.
+- Windows: the registration must be done outside the Claude desktop app's sandbox. Use
+  `install.cmd`, or a normal PowerShell or Windows Terminal.
+- macOS: make sure you use Google Chrome or Chromium, not another browser.
+- If Node comes from nvm, volta or fnm, set `CHROME_MCP_NODE_PATH` to the absolute path of `node`.
+- If the wrapper script is not executable, run `node native-server/dist/cli.js fix-permissions`.
 
-# Copy directly to clipboard
-mcp-chrome-bridge report --copy
-```
+## Extension ID mismatch
 
-By default, usernames, paths, and tokens are redacted. Use `--no-redact` if you're comfortable sharing full paths.
+"Access to the specified native messaging host is forbidden" means the extension ID Chrome shows is
+not the one the manifest allows. The ID must be `gnkfbbmfkabopdomoedaamfpgnakoici`. Load the
+`chrome-extension` folder from this package (not a build from another source) and re-run the
+installer. If a global `mcp-chrome-bridge` was installed, uninstall it first; it overwrites the
+registration with a different ID.
 
-## If Connection Fails After Clicking the Connect Button on the Extension
+## A tool was refused
 
-1. **Run the diagnostic tool first**
+- High-risk tool off. The error says which tool is off. Cookies, storage values, intercept, permission
+  grants, clipboard and recording are off until you set the matching key to `true` under
+  `highRiskTools` in the extension's `chrome.storage.local`. There is no settings screen for these yet.
+- Site policy denied. The target origin matched the denylist (Chrome internal pages, extension
+  pages, the Chrome Web Store, password managers, OS settings) or, in allowlist mode, was not on the
+  allowlist. The relevant keys are `sitePolicyMode`, `sitePolicyDenyOrigins` and
+  `sitePolicyAllowOrigins`. The default denylist always wins.
+- `needs_confirmation`. A cross-origin navigation or a value read earlier would be sent to another
+  site. Repeat the call with `confirmCrossOrigin: true` only if that is what you intend.
 
-```bash
-mcp-chrome-bridge doctor
-```
+## Audit log
 
-This will check installation, manifest, permissions, and Node.js path.
+Every tool call is appended as one JSON line to `~/.chrome-mcp-agent/audit.log` (Windows:
+`%USERPROFILE%\.chrome-mcp-agent\audit.log`). At about 5,000,000 bytes it is rotated to
+`audit.log.1`. The `chrome_audit_log` tool returns the last entries (50 by default, 200 at most).
 
-2. **Check if mcp-chrome-bridge is installed successfully**, ensure it's globally installed
+## Other log locations
 
-```bash
-mcp-chrome-bridge -V
-```
+- macOS: `~/Library/Logs/mcp-chrome-bridge/`
+- Windows: `%LOCALAPPDATA%\mcp-chrome-bridge\logs\`
+- Linux: `~/.local/state/mcp-chrome-bridge/logs/`
 
-<img width="612" alt="Screenshot 2025-06-11 15 09 57" src="https://github.com/user-attachments/assets/59458532-e6e1-457c-8c82-3756a5dbb28e" />
+## Tools still work after closing Chrome
 
-2. **Check if the manifest file is in the correct directory**
-
-Windows path: C:\Users\xxx\AppData\Roaming\Google\Chrome\NativeMessagingHosts
-
-Mac path: /Users/xxx/Library/Application\ Support/Google/Chrome/NativeMessagingHosts
-
-If the npm package is installed correctly, a file named `com.chromemcp.nativehost.json` should be generated in this directory
-
-3. **Check logs**
-   Logs are now stored in user-writable directories:
-
-- **macOS**: `~/Library/Logs/mcp-chrome-bridge/`
-- **Windows**: `%LOCALAPPDATA%\mcp-chrome-bridge\logs\`
-- **Linux**: `~/.local/state/mcp-chrome-bridge/logs/`
-
-<img width="804" alt="Screenshot 2025-06-11 15 09 41" src="https://github.com/user-attachments/assets/ce7b7c94-7c84-409a-8210-c9317823aae1" />
-
-4. **Check if you have execution permissions**
-   You need to check your installation path (if unclear, open the manifest file in step 2, the path field shows the installation directory). For example, if the Mac installation path is as follows:
-
-`xxx/node_modules/mcp-chrome-bridge/dist/run_host.sh`
-
-Check if this script has execution permissions. Run to fix:
-
-```bash
-mcp-chrome-bridge fix-permissions
-```
-
-5. **Node.js not found**
-   If you use a Node version manager (nvm, volta, asdf, fnm), the wrapper script may not find Node.js. Set the `CHROME_MCP_NODE_PATH` environment variable:
-
-```bash
-export CHROME_MCP_NODE_PATH=/path/to/your/node
-```
-
-Or run `mcp-chrome-bridge doctor --fix` to write the current Node path.
-
-## Log Locations
-
-Wrapper logs are now stored in user-writable locations:
-
-- **macOS**: `~/Library/Logs/mcp-chrome-bridge/`
-- **Windows**: `%LOCALAPPDATA%\mcp-chrome-bridge\logs\`
-- **Linux**: `~/.local/state/mcp-chrome-bridge/logs/`
+Chrome may still be running in the background (installed web apps, "continue running background
+apps"). Quit it from the system tray or menu bar and check with `pgrep -l -i chrome` (macOS) or
+`Get-Process chrome` (Windows).
