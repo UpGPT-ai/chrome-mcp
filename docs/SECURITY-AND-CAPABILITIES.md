@@ -106,6 +106,8 @@ These items were previously on the roadmap and are now in the code:
 - Exfiltration guard
 - Local audit log with rotation
 - Bearer token, Host and Origin checks on the bridge
+- File upload by URL fetches only http(s) addresses that resolve to public IPs, re-checked on every
+  redirect, and upload file names are confined to the bridge's temp directory
 - Human handoff (`chrome_request_human`) for CAPTCHA, passkey and hardware prompts
 
 ## Known limits
