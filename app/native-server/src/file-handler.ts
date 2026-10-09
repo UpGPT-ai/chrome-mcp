@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import fetch from 'node-fetch';
+import { assertFetchableUrl, isInsideDir, sanitizeFileName } from './file-guard';
 import { base64ByteLength, pdfTooLarge, resolveDownloadPath } from 'chrome-mcp-shared';
 
 /**
@@ -88,14 +89,28 @@ export class FileHandler {
    */
   private async downloadFile(fileUrl: string, fileName?: string): Promise<any> {
     try {
-      const response = await fetch(fileUrl);
+      // Validate every hop: redirects are followed by hand so a public URL cannot bounce the
+      // bridge to a loopback or cloud-metadata address.
+      let current = fileUrl;
+      let response = await fetch((await assertFetchableUrl(current)).toString(), {
+        redirect: 'manual',
+      });
+      for (let hop = 0; response.status >= 300 && response.status < 400; hop++) {
+        const location = response.headers.get('location');
+        if (!location || hop >= 5) throw new Error('Too many or invalid redirects');
+        current = new URL(location, current).toString();
+        response = await fetch((await assertFetchableUrl(current)).toString(), {
+          redirect: 'manual',
+        });
+      }
       if (!response.ok) {
         throw new Error(`Failed to download file: ${response.statusText}`);
       }
 
       // Generate filename if not provided
-      const finalFileName = fileName || this.generateFileName(fileUrl);
+      const finalFileName = this.safeFileName(fileName) || this.generateFileName(fileUrl);
       const filePath = path.join(this.tempDir, finalFileName);
+      if (!isInsideDir(this.tempDir, filePath)) throw new Error('Invalid file name');
 
       // Get the file buffer
       const buffer = await response.buffer();
@@ -126,8 +141,9 @@ export class FileHandler {
       const buffer = Buffer.from(base64Content, 'base64');
 
       // Generate filename if not provided
-      const finalFileName = fileName || `upload-${Date.now()}.bin`;
+      const finalFileName = this.safeFileName(fileName) || `upload-${Date.now()}.bin`;
       const filePath = path.join(this.tempDir, finalFileName);
+      if (!isInsideDir(this.tempDir, filePath)) throw new Error('Invalid file name');
 
       // Save to file
       fs.writeFileSync(filePath, buffer);
@@ -180,6 +196,9 @@ export class FileHandler {
    */
   private async readBase64File(filePath: string): Promise<any> {
     try {
+      if (!isInsideDir(this.tempDir, filePath)) {
+        throw new Error('Can only read files in temp directory');
+      }
       if (!fs.existsSync(filePath)) {
         throw new Error(`File does not exist: ${filePath}`);
       }
@@ -210,7 +229,7 @@ export class FileHandler {
   private async cleanupFile(filePath: string): Promise<any> {
     try {
       // Only allow cleanup of files in our temp directory
-      if (!filePath.startsWith(this.tempDir)) {
+      if (typeof filePath !== 'string' || !isInsideDir(this.tempDir, filePath)) {
         return {
           success: false,
           error: 'Can only cleanup files in temp directory',
@@ -326,6 +345,10 @@ export class FileHandler {
       }
     }
     return { success: true, entries };
+  }
+
+  private safeFileName(name?: string): string | null {
+    return typeof name === 'string' ? sanitizeFileName(name) : null;
   }
 
   /**
