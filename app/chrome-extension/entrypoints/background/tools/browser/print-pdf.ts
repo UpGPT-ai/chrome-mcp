@@ -3,6 +3,11 @@ import { ERROR_MESSAGES } from '@/common/constants';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES, base64ByteLength, parsePrintPdfArgs, pdfTooLarge } from 'chrome-mcp-shared';
 import { runWithDebugger } from '@/utils/cdp-run';
+import {
+  addNativeResponseListener,
+  removeNativeResponseListener,
+  postToNative,
+} from '@/entrypoints/background/native-host';
 
 /**
  * chrome_print_pdf — Page.printToPDF, then write the bytes through the native
@@ -24,7 +29,7 @@ function writePdfDownload(
   const requestId = `print-pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(onMessage);
+      removeNativeResponseListener(onMessage);
       reject(
         new Error(
           'Saving the PDF through the native host timed out. Large PDFs can exceed the native messaging size limit.',
@@ -45,7 +50,7 @@ function writePdfDownload(
         return;
       }
       clearTimeout(timer);
-      chrome.runtime.onMessage.removeListener(onMessage);
+      removeNativeResponseListener(onMessage);
       if (message.payload?.success && message.payload.filePath) {
         resolve({
           filePath: message.payload.filePath,
@@ -58,21 +63,16 @@ function writePdfDownload(
       );
     };
 
-    chrome.runtime.onMessage.addListener(onMessage);
-    chrome.runtime
-      .sendMessage({
-        type: 'forward_to_native',
-        message: {
-          type: 'file_operation',
-          requestId,
-          payload: { action: 'saveDownload', saveName, base64Data },
-        },
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        chrome.runtime.onMessage.removeListener(onMessage);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
+    addNativeResponseListener(onMessage);
+    postToNative({
+      type: 'file_operation',
+      requestId,
+      payload: { action: 'saveDownload', saveName, base64Data },
+    }).catch((error) => {
+      clearTimeout(timer);
+      removeNativeResponseListener(onMessage);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
   });
 }
 

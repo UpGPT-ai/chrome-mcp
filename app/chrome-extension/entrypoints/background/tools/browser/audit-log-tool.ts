@@ -1,6 +1,11 @@
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { TOOL_NAMES, parseAuditLimit } from 'chrome-mcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
+import {
+  addNativeResponseListener,
+  removeNativeResponseListener,
+  postToNative,
+} from '@/entrypoints/background/native-host';
 
 /**
  * chrome_audit_log reads the newest lines of ~/.chrome-mcp-agent/audit.log.
@@ -35,7 +40,7 @@ function readAuditEntries(limit: number): Promise<unknown[]> {
   const requestId = `audit-read-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(onMessage);
+      removeNativeResponseListener(onMessage);
       reject(new Error('Audit log read timed out'));
     }, AUDIT_TIMEOUT_MS);
 
@@ -52,7 +57,7 @@ function readAuditEntries(limit: number): Promise<unknown[]> {
         return;
       }
       clearTimeout(timer);
-      chrome.runtime.onMessage.removeListener(onMessage);
+      removeNativeResponseListener(onMessage);
       if (message.payload?.success && Array.isArray(message.payload.entries)) {
         resolve(message.payload.entries);
         return;
@@ -60,21 +65,16 @@ function readAuditEntries(limit: number): Promise<unknown[]> {
       reject(new Error(message.payload?.error || message.error || 'Audit log was not read'));
     };
 
-    chrome.runtime.onMessage.addListener(onMessage);
-    chrome.runtime
-      .sendMessage({
-        type: 'forward_to_native',
-        message: {
-          type: 'file_operation',
-          requestId,
-          payload: { action: 'readAudit', limit },
-        },
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        chrome.runtime.onMessage.removeListener(onMessage);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
+    addNativeResponseListener(onMessage);
+    postToNative({
+      type: 'file_operation',
+      requestId,
+      payload: { action: 'readAudit', limit },
+    }).catch((error) => {
+      clearTimeout(timer);
+      removeNativeResponseListener(onMessage);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
   });
 }
 

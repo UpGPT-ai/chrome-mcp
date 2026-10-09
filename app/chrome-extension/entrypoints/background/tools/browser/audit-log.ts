@@ -1,4 +1,9 @@
 import { formatAuditLine, type AuditLineInput } from 'chrome-mcp-shared';
+import {
+  addNativeResponseListener,
+  removeNativeResponseListener,
+  postToNative,
+} from '@/entrypoints/background/native-host';
 
 /**
  * Append one audit line through the native host.
@@ -27,7 +32,7 @@ export function withAuditError(message: string, auditError: string | null): stri
 function sendAudit(requestId: string, line: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(onMessage);
+      removeNativeResponseListener(onMessage);
       reject(new Error('Audit log write timed out'));
     }, AUDIT_TIMEOUT_MS);
 
@@ -44,7 +49,7 @@ function sendAudit(requestId: string, line: string): Promise<void> {
         return;
       }
       clearTimeout(timer);
-      chrome.runtime.onMessage.removeListener(onMessage);
+      removeNativeResponseListener(onMessage);
       if (message.payload?.success) {
         resolve();
         return;
@@ -52,20 +57,15 @@ function sendAudit(requestId: string, line: string): Promise<void> {
       reject(new Error(message.payload?.error || message.error || 'Audit log was not written'));
     };
 
-    chrome.runtime.onMessage.addListener(onMessage);
-    chrome.runtime
-      .sendMessage({
-        type: 'forward_to_native',
-        message: {
-          type: 'file_operation',
-          requestId,
-          payload: { action: 'appendAudit', line },
-        },
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        chrome.runtime.onMessage.removeListener(onMessage);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
+    addNativeResponseListener(onMessage);
+    postToNative({
+      type: 'file_operation',
+      requestId,
+      payload: { action: 'appendAudit', line },
+    }).catch((error) => {
+      clearTimeout(timer);
+      removeNativeResponseListener(onMessage);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
   });
 }

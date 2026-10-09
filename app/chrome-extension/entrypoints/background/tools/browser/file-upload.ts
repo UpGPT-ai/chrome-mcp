@@ -3,6 +3,11 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES, highRiskDisabledError } from 'chrome-mcp-shared';
 import { readHighRiskFlags } from './high-risk';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
+import {
+  addNativeResponseListener,
+  removeNativeResponseListener,
+  postToNative,
+} from '@/entrypoints/background/native-host';
 
 interface FileUploadToolParams {
   selector: string; // CSS selector for the file input element
@@ -191,7 +196,7 @@ class FileUploadTool extends BaseBrowserToolExecutor {
           message.responseToRequestId === requestId
         ) {
           clearTimeout(timeout);
-          chrome.runtime.onMessage.removeListener(handleMessage);
+          removeNativeResponseListener(handleMessage);
 
           if (message.payload?.success && message.payload?.filePath) {
             resolve(message.payload.filePath);
@@ -206,29 +211,24 @@ class FileUploadTool extends BaseBrowserToolExecutor {
       };
 
       // Add listener
-      chrome.runtime.onMessage.addListener(handleMessage);
+      addNativeResponseListener(handleMessage);
 
       // Send message to background script to forward to native host
-      chrome.runtime
-        .sendMessage({
-          type: 'forward_to_native',
-          message: {
-            type: 'file_operation',
-            requestId: requestId,
-            payload: {
-              action: 'prepareFile',
-              fileUrl,
-              base64Data,
-              fileName,
-            },
-          },
-        })
-        .catch((error) => {
-          console.error('Error sending message to background:', error);
-          clearTimeout(timeout);
-          chrome.runtime.onMessage.removeListener(handleMessage);
-          resolve(null);
-        });
+      postToNative({
+        type: 'file_operation',
+        requestId: requestId,
+        payload: {
+          action: 'prepareFile',
+          fileUrl,
+          base64Data,
+          fileName,
+        },
+      }).catch((error) => {
+        console.error('Error sending message to background:', error);
+        clearTimeout(timeout);
+        removeNativeResponseListener(handleMessage);
+        resolve(null);
+      });
     });
   }
 }

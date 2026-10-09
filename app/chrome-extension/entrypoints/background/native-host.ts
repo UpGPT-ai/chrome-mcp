@@ -8,6 +8,28 @@ import { acquireKeepalive } from './keepalive-manager';
 const LOG_PREFIX = '[NativeHost]';
 
 let nativePort: chrome.runtime.Port | null = null;
+
+type NativeResponseListener = (message: any) => void;
+const nativeResponseListeners = new Set<NativeResponseListener>();
+
+/**
+ * In-process channel for file_operation responses. chrome.runtime.sendMessage from the
+ * service worker never reaches the worker's own onMessage listeners, so tools running in
+ * the worker subscribe here instead.
+ */
+export function addNativeResponseListener(listener: NativeResponseListener): void {
+  nativeResponseListeners.add(listener);
+}
+
+export function removeNativeResponseListener(listener: NativeResponseListener): void {
+  nativeResponseListeners.delete(listener);
+}
+
+/** Post a message straight to the native host. Rejects when it is not connected. */
+export async function postToNative(message: unknown): Promise<void> {
+  if (!nativePort) throw new Error('Native host not connected');
+  nativePort.postMessage(message);
+}
 export const HOST_NAME = NATIVE_HOST.NAME;
 
 // ==================== Reconnect Configuration ====================
@@ -431,6 +453,13 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
         console.error('Error from native host:', message.payload?.message || 'Unknown error');
       } else if (message.type === 'file_operation_response') {
         // Forward file operation response back to the requesting tool
+        for (const listener of Array.from(nativeResponseListeners)) {
+          try {
+            listener(message);
+          } catch {
+            // a failing listener must not block the others
+          }
+        }
         chrome.runtime.sendMessage(message).catch(() => {
           // Ignore if no listeners
         });
