@@ -223,3 +223,15 @@ element picker overlay, and the confirm dialogs. The old purple/upstream look mu
 - Accessibility: focus rings, contrast AA in both themes, keyboard operable.
 - Work in slices: tokens, then shared components, then popup, then each other window. Gates
   after each slice. Final check is a screenshot pass by the lead in both themes.
+
+## Addendum 3: docs and links (item 18)
+
+- `LINKS.TROUBLESHOOTING` in `app/chrome-extension/common/constants.ts` still points at
+  `github.com/hangwin/mcp-chrome`. Replace it with `https://github.com/UpGPT-ai/chrome-mcp/blob/main/docs/TROUBLESHOOTING.md`
+  and add `LINKS.DOCS` (docs index), `LINKS.TOOLS`, `LINKS.SECURITY`, `LINKS.HOME` (`https://upgpt.ai/chrome-mcp`).
+- Every popup, options, welcome and sidepanel "help", "docs" or "learn more" link uses `LINKS.*` only. No
+  hard-coded upstream URLs anywhere (README release badges and download links too).
+- Rewrite for our tool: `docs/README.md` (index), `TROUBLESHOOTING.md` (port 13366, token header, reload steps,
+  doctor, DevTools-attached errors, permission prompts), `TOOLS.md` (every new tool and parameter), `INSTALL.md`
+  (Mac and Windows). Keep the `_zh` files only if kept current, otherwise drop them.
+- The links go live only after the public repo exists. Land the docs in the repo first, publish second.
