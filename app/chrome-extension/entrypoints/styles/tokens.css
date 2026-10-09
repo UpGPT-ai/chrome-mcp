@@ -1,0 +1,33 @@
+/* One set of design tokens for every extension window (popup, side panel, builder, welcome). */
+:root {
+  --cm-bg: #ffffff;
+  --cm-surface: #f6f7f9;
+  --cm-border: #dfe2e8;
+  --cm-text: #14171f;
+  --cm-text-muted: #5a6272;
+  --cm-accent: #0b6bcb;
+  --cm-accent-contrast: #ffffff;
+  --cm-ok: #12805c;
+  --cm-warn: #b25e09;
+  --cm-danger: #c0292b;
+  --cm-radius: 8px;
+  --cm-radius-sm: 5px;
+  --cm-font:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --cm-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cm-bg: #14171f;
+    --cm-surface: #1c212c;
+    --cm-border: #2e3544;
+    --cm-text: #eceff4;
+    --cm-text-muted: #9aa3b5;
+    --cm-accent: #5aa7f5;
+    --cm-accent-contrast: #0a1018;
+    --cm-ok: #4cc79b;
+    --cm-warn: #f0a24b;
+    --cm-danger: #f27375;
+  }
+}

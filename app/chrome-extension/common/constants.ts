@@ -59,8 +59,16 @@ export const SUCCESS_MESSAGES = {
 } as const;
 
 // External Links
+const REPO = 'https://github.com/UpGPT-ai/chrome-mcp';
+
 export const LINKS = {
-  TROUBLESHOOTING: 'https://github.com/hangwin/mcp-chrome/blob/master/docs/TROUBLESHOOTING.md',
+  HOME: 'https://upgpt.ai/chrome-mcp',
+  REPO,
+  DOCS: `${REPO}/blob/main/docs/README.md`,
+  TOOLS: `${REPO}/blob/main/docs/TOOLS.md`,
+  SECURITY: `${REPO}/blob/main/docs/SECURITY-AND-CAPABILITIES.md`,
+  TROUBLESHOOTING: `${REPO}/blob/main/docs/TROUBLESHOOTING.md`,
+  INSTALL: `${REPO}/blob/main/docs/INSTALL.md`,
 } as const;
 
 // File Extensions and MIME Types

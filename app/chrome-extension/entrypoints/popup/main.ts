@@ -1,16 +1,8 @@
 import { createApp } from 'vue';
 import { NativeMessageType } from 'chrome-mcp-shared';
 import './style.css';
-// Import AgentChat theme styles
-import '../sidepanel/styles/agent-chat.css';
-import { preloadAgentTheme } from '../sidepanel/composables/useAgentTheme';
 import App from './App.vue';
 
-// Preload the theme before Vue mounts to prevent theme flicker
-preloadAgentTheme().then(() => {
-  // Trigger ensure native connection (fire-and-forget, don't block UI mounting)
-  void chrome.runtime.sendMessage({ type: NativeMessageType.ENSURE_NATIVE }).catch(() => {
-    // Silent failure - background will handle reconnection
-  });
-  createApp(App).mount('#app');
-});
+// Ask the background to ensure the native connection. Fire and forget: the popup renders either way.
+void chrome.runtime.sendMessage({ type: NativeMessageType.ENSURE_NATIVE }).catch(() => {});
+createApp(App).mount('#app');
