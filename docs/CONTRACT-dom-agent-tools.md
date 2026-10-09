@@ -170,8 +170,8 @@ Live CDP behaviour is verified manually by the lead, not by jest.
 
 ### Item 15: new default port (do this FIRST after item 5 is committed)
 
-- 12306 is the upstream mcp-chrome default, so two installs collide. New default: **18306**
-  (below the OS ephemeral range, not a well-known service port).
+- 12306 is the upstream mcp-chrome default, so two installs collide. New default: **13366**
+  (below the OS ephemeral range, not a well-known service port; chosen by Greg).
 - Single source of truth: `DEFAULT_SERVER_PORT` in `packages/shared/src/constants.ts`.
   Replace the hard-coded copies in `app/chrome-extension/common/constants.ts`,
   `entrypoints/popup/App.vue`, `entrypoints/background/web-editor/index.ts`,
