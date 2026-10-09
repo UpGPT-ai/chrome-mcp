@@ -334,7 +334,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.COMPUTER,
     description:
-      "Use a mouse and keyboard to interact with a web browser, and take screenshots.\nPreferred order: chrome_snapshot, act by ref with observe:true, then read the diff. Take a screenshot only when layout or pixels matter.\n* Whenever you intend to click on an element like an icon, you should consult a snapshot or read_page to determine the ref of the element before moving the cursor.\n* If you tried clicking on a program or link but it failed to load, even after waiting, try screenshot and then adjusting your click location so that the tip of the cursor visually falls on the element that you want to click.\n* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.",
+      "Use a mouse and keyboard to interact with a web browser, and take screenshots.\nPreferred order: chrome_snapshot, act by ref with observe:true, then read the diff. Take a screenshot only when layout or pixels matter.\n* Whenever you intend to click on an element like an icon, you should consult a snapshot or read_page to determine the ref of the element before moving the cursor.\n* If you tried clicking on a program or link but it failed to load, even after waiting, try screenshot and then adjusting your click location so that the tip of the cursor visually falls on the element that you want to click.\n* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.\nHover moves the pointer in steps so CSS :hover and mouseenter fire, then holds for holdMs (default 400, max 5000). left_click_drag steps from startRef or startCoordinates to ref or coordinates. startOffset and offset are viewport pixels added to those points. auto uses pointer events for sliders and HTML5 drag events for draggable elements, links, and images.\nUnsupported: the DOM hover fallback does not trigger CSS :hover. HTML5 drag sends text/plain only, not files or a page dragstart payload. OS file drags and closed shadow roots are not supported. Pointer drags do not emit drop. HTML5 drags do not move range sliders.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -375,6 +375,40 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description:
             'Drag start ref from chrome_snapshot or chrome_read_page (alternative to startCoordinates). Iframe refs look like ref_12@frameId.',
+        },
+        startOffset: {
+          type: 'object',
+          description:
+            'Viewport pixels added to the drag start after screenshot projection. { x, y }.',
+          properties: {
+            x: { type: 'number' },
+            y: { type: 'number' },
+          },
+        },
+        offset: {
+          type: 'object',
+          description:
+            'Viewport pixels added to the drag end after screenshot projection. { x, y }.',
+          properties: {
+            x: { type: 'number' },
+            y: { type: 'number' },
+          },
+        },
+        holdMs: {
+          type: 'number',
+          description:
+            'For action=hover: milliseconds to keep the pointer on the target while the debugger stays attached. Default 400, max 5000. If omitted, duration (seconds) is used.',
+        },
+        dragMode: {
+          type: 'string',
+          enum: ['auto', 'pointer', 'html5'],
+          description:
+            'For action=left_click_drag. auto uses pointer events for sliders and HTML5 drag events for draggable elements, links, and images. Default auto.',
+        },
+        steps: {
+          type: 'number',
+          description:
+            'For action=left_click_drag: pointer segments from start to end (integer 1-40, default 8).',
         },
         scrollDirection: {
           type: 'string',
@@ -452,7 +486,8 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         duration: {
           type: 'number',
-          description: 'Seconds to wait for action=wait (max 30s)',
+          description:
+            'Seconds to wait for action=wait (max 30s). For action=hover, used as the hold when holdMs is omitted.',
         },
         observe: {
           description:

@@ -1,6 +1,16 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES, parseObserve } from 'chrome-mcp-shared';
+import {
+  TOOL_NAMES,
+  applyOffset,
+  chooseDragMode,
+  hoverApproach,
+  parseHoldMs,
+  parseObserve,
+  parseOffset,
+  parsePointerSteps,
+  pointerSteps,
+} from 'chrome-mcp-shared';
 import { ERROR_MESSAGES, TIMEOUTS } from '@/common/constants';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { clickTool, fillTool, resolveRefTarget } from './interaction';
@@ -61,13 +71,18 @@ interface ComputerParams {
   // Optional element refs (from chrome_read_page) as alternative to coordinates
   ref?: string; // click target or drag end
   startRef?: string; // drag start
+  startOffset?: { x?: number; y?: number };
+  offset?: { x?: number; y?: number };
+  dragMode?: string;
+  steps?: number;
   scrollDirection?: 'up' | 'down' | 'left' | 'right';
   scrollAmount?: number;
   text?: string; // for type/key
   repeat?: number; // for key action (1-100)
   modifiers?: Modifiers; // for click actions
   region?: ZoomRegion; // for zoom action
-  duration?: number; // seconds for wait
+  duration?: number; // seconds for wait; hover hold when holdMs is omitted
+  holdMs?: number; // hover hold in milliseconds
   // For fill
   selector?: string;
   selectorType?: 'css' | 'xpath'; // Type of selector (default: 'css')
@@ -117,6 +132,82 @@ class CDPHelper {
       params.deltaY = opts.deltaY || 0;
     }
     await this.send(tabId, 'Input.dispatchMouseEvent', params);
+  }
+
+  /** Several moves, so the page sees the pointer enter instead of teleport. */
+  static async hoverSequence(tabId: number, points: Array<{ x: number; y: number }>) {
+    for (const p of points) {
+      await this.dispatchMouseEvent(tabId, {
+        type: 'mouseMoved',
+        x: p.x,
+        y: p.y,
+        button: 'none',
+        buttons: 0,
+      });
+    }
+  }
+
+  /** Press, step, and release. Range sliders follow this path. It does not emit drop. */
+  static async dragPointer(tabId: number, points: Array<{ x: number; y: number }>) {
+    const start = points[0];
+    const end = points[points.length - 1];
+    if (!start || !end) throw new Error('Drag path is empty');
+    await this.dispatchMouseEvent(tabId, {
+      type: 'mouseMoved',
+      x: start.x,
+      y: start.y,
+      button: 'none',
+      buttons: 0,
+    });
+    await this.dispatchMouseEvent(tabId, {
+      type: 'mousePressed',
+      x: start.x,
+      y: start.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+    for (let i = 1; i < points.length; i++) {
+      await this.dispatchMouseEvent(tabId, {
+        type: 'mouseMoved',
+        x: points[i].x,
+        y: points[i].y,
+        button: 'left',
+        buttons: 1,
+      });
+    }
+    await this.dispatchMouseEvent(tabId, {
+      type: 'mouseReleased',
+      x: end.x,
+      y: end.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
+  }
+
+  /**
+   * HTML5 drag events under the pointer. This does not run the source dragstart,
+   * so the payload is text/plain only. setInterceptDrags is not used: it swallows the drag.
+   */
+  static async dragHtml5(tabId: number, points: Array<{ x: number; y: number }>, text: string) {
+    const data = {
+      items: [{ mimeType: 'text/plain', data: text || 'drag' }],
+      dragOperationsMask: 17,
+    };
+    const send = (type: string, p: { x: number; y: number }) =>
+      this.send(tabId, 'Input.dispatchDragEvent', {
+        type,
+        x: Math.round(p.x),
+        y: Math.round(p.y),
+        data,
+      });
+    const first = points[0];
+    const last = points[points.length - 1];
+    if (!first || !last) throw new Error('Drag path is empty');
+    await send('dragEnter', first);
+    for (const p of points) await send('dragOver', p);
+    await send('drop', last);
   }
 
   static async insertText(tabId: number, text: string) {
@@ -337,6 +428,55 @@ class ComputerTool extends BaseBrowserToolExecutor {
     return { x: point.x, y: point.y };
   }
 
+  /** Read the drag source from the ref map. A miss falls back to a pointer drag. */
+  private async dragSourceHint(
+    tabId: number,
+    startRef: string,
+    fallbackFrameId?: number,
+  ): Promise<{ range: boolean; draggable: boolean; text: string }> {
+    const empty = { range: false, draggable: false, text: '' };
+    try {
+      const target = resolveRefTarget(startRef, fallbackFrameId);
+      if (!target.ref) return empty;
+      const [injection] = await chrome.scripting.executeScript({
+        target: {
+          tabId,
+          ...(typeof target.frameId === 'number' ? { frameIds: [target.frameId] } : {}),
+        },
+        world: 'ISOLATED',
+        func: (localRef: string) => {
+          const map = (window as any).__claudeElementMap;
+          const el = map?.[localRef]?.deref?.() ?? null;
+          if (!el) return { range: false, draggable: false, text: '' };
+          const tag = String(el.tagName || '').toUpperCase();
+          const type = String(el.getAttribute?.('type') || '').toLowerCase();
+          const role = String(el.getAttribute?.('role') || '').toLowerCase();
+          const range = (tag === 'INPUT' && type === 'range') || role === 'slider';
+          const rawAttr = el.getAttribute?.('draggable');
+          const attr = typeof rawAttr === 'string' ? rawAttr.toLowerCase() : '';
+          const defaultDrag = tag === 'IMG' || (tag === 'A' && el.hasAttribute('href'));
+          const draggable = attr === 'true' || (attr !== 'false' && defaultDrag);
+          const text = String(el.innerText || el.textContent || el.getAttribute?.('href') || '')
+            .trim()
+            .slice(0, 200);
+          return { range, draggable: !range && draggable, text };
+        },
+        args: [target.ref],
+      });
+      const result = injection?.result as
+        | { range?: boolean; draggable?: boolean; text?: string }
+        | undefined;
+      if (!result || typeof result !== 'object') return empty;
+      return {
+        range: Boolean(result.range),
+        draggable: Boolean(result.draggable),
+        text: typeof result.text === 'string' ? result.text : '',
+      };
+    } catch {
+      return empty;
+    }
+  }
+
   private async executeAction(params: ComputerParams, tab: chrome.tabs.Tab): Promise<ToolResult> {
     if (!tab.id) {
       return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
@@ -399,6 +539,9 @@ class ComputerTool extends BaseBrowserToolExecutor {
         };
       }
       case 'hover': {
+        const holdMs = parseHoldMs(params.holdMs, params.duration);
+        if (typeof holdMs !== 'number') return createErrorResponse(holdMs.error);
+
         // Resolve target point from ref | selector | coordinates
         let coord: Coordinates | undefined = undefined;
         let resolvedBy: 'ref' | 'selector' | 'coordinates' | undefined;
@@ -508,27 +651,16 @@ class ComputerTool extends BaseBrowserToolExecutor {
           if (stale) return stale;
         }
 
+        // Step in from outside, then hold while still attached so :hover menus can open.
+        const path = hoverApproach(coord);
         try {
           await CDPHelper.attach(tab.id);
           try {
-            // Move pointer to target. We can dispatch a single mouseMoved; browsers will generate mouseover/mouseenter as needed.
-            await CDPHelper.dispatchMouseEvent(tab.id, {
-              type: 'mouseMoved',
-              x: coord.x,
-              y: coord.y,
-              button: 'none',
-              buttons: 0,
-            });
+            await CDPHelper.hoverSequence(tab.id, path);
+            if (holdMs > 0) await new Promise((r) => setTimeout(r, holdMs));
           } finally {
             await CDPHelper.detach(tab.id);
           }
-
-          // Optional hold to allow UI (menus/tooltips) to appear
-          const holdMs = Math.max(
-            0,
-            Math.min(params.duration ? params.duration * 1000 : 400, 5000),
-          );
-          if (holdMs > 0) await new Promise((r) => setTimeout(r, holdMs));
 
           return {
             content: [
@@ -537,9 +669,11 @@ class ComputerTool extends BaseBrowserToolExecutor {
                 text: JSON.stringify({
                   success: true,
                   action: 'hover',
-                  coordinates: coord,
+                  coordinates: path[path.length - 1] || coord,
                   resolvedBy,
                   transport: 'cdp',
+                  holdMs,
+                  steps: path.length,
                 }),
               },
             ],
@@ -805,6 +939,19 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
       }
       case 'left_click_drag': {
+        const parsedStartOffset = parseOffset(params.startOffset, 'startOffset');
+        if (parsedStartOffset && 'error' in parsedStartOffset) {
+          return createErrorResponse(parsedStartOffset.error);
+        }
+        const parsedEndOffset = parseOffset(params.offset, 'offset');
+        if (parsedEndOffset && 'error' in parsedEndOffset) {
+          return createErrorResponse(parsedEndOffset.error);
+        }
+        const stepCount = parsePointerSteps(params.steps);
+        if (typeof stepCount !== 'number') return createErrorResponse(stepCount.error);
+        const requestedMode = chooseDragMode({ dragMode: params.dragMode });
+        if (typeof requestedMode !== 'string') return createErrorResponse(requestedMode.error);
+
         if (!params.startCoordinates && !params.startRef)
           return createErrorResponse('Provide startRef or startCoordinates for drag');
         if (!params.coordinates && !params.ref)
@@ -856,44 +1003,64 @@ class ComputerTool extends BaseBrowserToolExecutor {
           }
         }
         if (!start || !end) return createErrorResponse('Failed to resolve drag coordinates');
+        start = applyOffset(start, parsedStartOffset);
+        end = applyOffset(end, parsedEndOffset);
+
+        let hint = { range: false, draggable: false, text: '' };
+        if (params.startRef && params.dragMode !== 'pointer') {
+          hint = await this.dragSourceHint(tab.id, params.startRef, params.frameId);
+        }
+        const chosen = chooseDragMode({
+          dragMode: params.dragMode,
+          range: hint.range,
+          draggable: hint.draggable,
+        });
+        if (typeof chosen !== 'string') return createErrorResponse(chosen.error);
+
+        const path = pointerSteps(start, end, stepCount);
+        let mode = chosen;
+        let note: string | undefined;
         try {
           await CDPHelper.attach(tab.id);
-          await CDPHelper.dispatchMouseEvent(tab.id, {
-            type: 'mouseMoved',
-            x: start.x,
-            y: start.y,
-            button: 'none',
-            buttons: 0,
-          });
-          await CDPHelper.dispatchMouseEvent(tab.id, {
-            type: 'mousePressed',
-            x: start.x,
-            y: start.y,
-            button: 'left',
-            buttons: 1,
-            clickCount: 1,
-          });
-          await CDPHelper.dispatchMouseEvent(tab.id, {
-            type: 'mouseMoved',
-            x: end.x,
-            y: end.y,
-            button: 'left',
-            buttons: 1,
-          });
-          await CDPHelper.dispatchMouseEvent(tab.id, {
-            type: 'mouseReleased',
-            x: end.x,
-            y: end.y,
-            button: 'left',
-            buttons: 0,
-            clickCount: 1,
-          });
+          if (mode === 'html5') {
+            try {
+              await CDPHelper.dragHtml5(tab.id, path, hint.text);
+            } catch (dragError) {
+              try {
+                await CDPHelper.send(tab.id, 'Input.dispatchDragEvent', {
+                  type: 'dragCancel',
+                  x: Math.round(end.x),
+                  y: Math.round(end.y),
+                  data: { items: [], dragOperationsMask: 0 },
+                });
+              } catch {
+                // No drag is in progress, or the drag API is missing.
+              }
+              try {
+                await CDPHelper.dragPointer(tab.id, path);
+              } catch {
+                throw dragError;
+              }
+              mode = 'pointer';
+              note = 'HTML5 drag events were unavailable, used pointer drag';
+            }
+          } else {
+            await CDPHelper.dragPointer(tab.id, path);
+          }
           await CDPHelper.detach(tab.id);
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ success: true, action: 'left_click_drag', start, end }),
+                text: JSON.stringify({
+                  success: true,
+                  action: 'left_click_drag',
+                  start,
+                  end,
+                  mode,
+                  steps: path.length,
+                  ...(note ? { note } : {}),
+                }),
               },
             ],
             isError: false,
@@ -1390,6 +1557,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
                   resolvedBy: 'ref',
                   transport: 'dom-ref',
                   target: resp.target,
+                  note: 'DOM hover does not trigger CSS :hover',
                 }),
               },
             ],
@@ -1458,6 +1626,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
               resolvedBy,
               transport: 'dom',
               target: payload.target,
+              note: 'DOM hover does not trigger CSS :hover',
             }),
           },
         ],
