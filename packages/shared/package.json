@@ -1,7 +1,12 @@
 {
   "name": "chrome-mcp-shared",
   "version": "1.0.1",
-  "author": "hangye",
+  "author": "UpGPT.ai (originally by hangye)",
+  "homepage": "https://upgpt.ai/chrome-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UpGPT-ai/chrome-mcp.git"
+  },
   "main": "dist/index.js",
   "module": "./dist/index.mjs",
   "types": "dist/index.d.ts",

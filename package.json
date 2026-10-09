@@ -2,7 +2,12 @@
   "name": "mcp-chrome-bridge-monorepo",
   "version": "1.0.0",
   "private": true,
-  "author": "hangye",
+  "author": "UpGPT.ai (originally by hangye)",
+  "homepage": "https://upgpt.ai/chrome-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UpGPT-ai/chrome-mcp.git"
+  },
   "type": "module",
   "scripts": {
     "build:shared": "pnpm --filter chrome-mcp-shared build",

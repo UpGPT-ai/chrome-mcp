@@ -1,7 +1,12 @@
 {
   "name": "chrome-mcp-server",
   "description": "a chrome extension to use your own chrome as a mcp server",
-  "author": "hangye",
+  "author": "UpGPT.ai (originally by hangye)",
+  "homepage": "https://upgpt.ai/chrome-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UpGPT-ai/chrome-mcp.git"
+  },
   "private": true,
   "version": "1.0.0",
   "type": "module",

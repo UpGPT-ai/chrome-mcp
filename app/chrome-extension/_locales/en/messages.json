@@ -1,10 +1,10 @@
 {
   "extensionName": {
-    "message": "chrome-mcp-server",
+    "message": "Chrome MCP from UpGPT.ai",
     "description": "Extension name"
   },
   "extensionDescription": {
-    "message": "Exposes browser capabilities with your own chrome",
+    "message": "Let your AI assistant use your own Chrome through MCP. Open source, MIT, built by UpGPT.ai.",
     "description": "Extension description"
   },
   "nativeServerConfigLabel": {
