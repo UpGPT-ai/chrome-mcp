@@ -20,7 +20,7 @@ const id=[...h].map(x=>String.fromCharCode(97+parseInt(x,16))).join('');
 const want=(fs.readFileSync('$ROOT/app/native-server/src/scripts/constant.ts','utf8').match(/EXTENSION_ID = '([a-p]{32})'/)||[])[1];
 if(id!==want){console.error('extension id '+id+' does not match EXTENSION_ID '+want);process.exit(1);}
 console.log('extension id ok: '+id);"
-echo "==> build native-server"; (cd "$ROOT/app/native-server" && pnpm run build >/dev/null)
+echo "==> build native-server"; (cd "$ROOT/app/native-server" && npm run build >/dev/null)
 
 cp "$ROOT"/packaging-template/* "$STAGE/"
 chmod +x "$STAGE/install.sh"
