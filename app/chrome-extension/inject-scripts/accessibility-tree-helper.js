@@ -91,6 +91,28 @@
       const labelText = lab ? visibleText(lab).trim() : '';
       if (labelText) return labelText;
     }
+    // aria-labelledby: space-separated ids of the elements that name this control
+    const labelledBy = el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const names = labelledBy
+        .split(/\s+/)
+        .map((id) => {
+          const ref = id ? document.getElementById(id) : null;
+          return ref ? visibleText(ref).trim() : '';
+        })
+        .filter(Boolean);
+      if (names.length) return names.join(' ');
+    }
+    // A wrapping <label> names its control, e.g. <label>Email <input></label>
+    if (['input', 'select', 'textarea'].includes(tag)) {
+      const wrapper = el.closest('label');
+      if (wrapper) {
+        const clone = /** @type {HTMLElement} */ (wrapper.cloneNode(true));
+        clone.querySelectorAll('input, select, textarea, button').forEach((c) => c.remove());
+        const wrapText = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+        if (wrapText) return wrapText;
+      }
+    }
     if (tag === 'input') {
       const input = /** @type {HTMLInputElement} */ (el);
       const type = input.getAttribute('type') || '';
