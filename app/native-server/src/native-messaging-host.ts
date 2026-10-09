@@ -2,8 +2,19 @@ import { stdin, stdout } from 'process';
 import { Server } from './server';
 import { v4 as uuidv4 } from 'uuid';
 import { NativeMessageType } from 'chrome-mcp-shared';
-import { TIMEOUTS } from './constant';
+import { NATIVE_SERVER_PORT, TIMEOUTS, parseChromeMcpPortEnv } from './constant';
 import fileHandler from './file-handler';
+
+/** Captured at process start, before a successful listen writes CHROME_MCP_PORT back into the env. */
+const launchPort = parseChromeMcpPortEnv();
+
+function bridgeListenPort(requested: unknown): number | { error: string } {
+  if (launchPort.error) return { error: launchPort.error };
+  if (launchPort.port !== null) return launchPort.port;
+  const port = typeof requested === 'number' ? requested : Number(requested);
+  if (Number.isInteger(port) && port >= 1 && port <= 65535) return port;
+  return NATIVE_SERVER_PORT;
+}
 
 interface PendingRequest {
   resolve: (value: any) => void;
@@ -119,9 +130,15 @@ export class NativeMessagingHost {
     // Handle directive messages from Chrome
     try {
       switch (message.type) {
-        case NativeMessageType.START:
-          await this.startServer(message.payload?.port || 12306);
+        case NativeMessageType.START: {
+          const port = bridgeListenPort(message.payload?.port);
+          if (typeof port !== 'number') {
+            this.sendError(port.error);
+            break;
+          }
+          await this.startServer(port);
           break;
+        }
         case NativeMessageType.STOP:
           await this.stopServer();
           break;

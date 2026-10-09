@@ -24,9 +24,9 @@ import {
   tryRegisterUserLevelHost,
   getLogDir,
 } from './utils';
-import { NATIVE_SERVER_PORT } from '../constant';
+import { NATIVE_SERVER_PORT, parseChromeMcpPortEnv } from '../constant';
+import { describePortListener } from '../port-in-use';
 
-const EXPECTED_PORT = 12306;
 const SCHEMA_VERSION = 1;
 const MIN_NODE_MAJOR_VERSION = 20;
 
@@ -641,6 +641,8 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
   const nodeScriptPath = path.resolve(distDir, 'index.js');
   const logDir = getLogDir();
   const stdioConfigPath = path.resolve(distDir, 'mcp', 'stdio-config.json');
+  const parsedPortEnv = parseChromeMcpPortEnv();
+  const expectedPort = parsedPortEnv.port ?? NATIVE_SERVER_PORT;
 
   // Run fixes if requested
   const fixes = await attemptFixes(
@@ -961,6 +963,19 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
   }
 
   // Check 7: Port configuration
+  if (parsedPortEnv.error) {
+    checks.push({
+      id: 'port.env',
+      title: 'Port override',
+      status: 'error',
+      message: parsedPortEnv.error,
+      details: {
+        fix: ['Unset CHROME_MCP_PORT or set it to an integer from 1 to 65535'],
+      },
+    });
+    nextSteps.push('Fix CHROME_MCP_PORT (integer from 1 to 65535) and re-run doctor');
+  }
+
   if (fs.existsSync(stdioConfigPath)) {
     const cfg = readJsonFile(stdioConfigPath);
     if (!cfg.ok) {
@@ -975,42 +990,48 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
         const configValue = cfg.value as Record<string, unknown>;
         const url = new URL(configValue.url as string);
         const port = Number(url.port);
-        const portOk = port === EXPECTED_PORT;
+        const portOk = port === expectedPort;
         checks.push({
           id: 'port.config',
           title: 'Port config',
           status: portOk ? 'ok' : 'error',
           message: configValue.url as string,
           details: {
-            expectedPort: EXPECTED_PORT,
+            expectedPort,
             actualPort: port,
-            fix: portOk ? undefined : [`${COMMAND_NAME} update-port ${EXPECTED_PORT}`],
+            fix: portOk ? undefined : [`${COMMAND_NAME} update-port ${expectedPort}`],
           },
         });
-        if (!portOk) nextSteps.push(`${COMMAND_NAME} update-port ${EXPECTED_PORT}`);
+        if (!portOk) nextSteps.push(`${COMMAND_NAME} update-port ${expectedPort}`);
 
-        // Check constant consistency
-        const nativePortOk = NATIVE_SERVER_PORT === EXPECTED_PORT;
         checks.push({
           id: 'port.constant',
           title: 'Port constant',
-          status: nativePortOk ? 'ok' : 'warn',
-          message: `NATIVE_SERVER_PORT=${NATIVE_SERVER_PORT}`,
-          details: { expectedPort: EXPECTED_PORT },
+          status: 'ok',
+          message: parsedPortEnv.port
+            ? `Using CHROME_MCP_PORT=${parsedPortEnv.port} (built-in default ${NATIVE_SERVER_PORT})`
+            : `NATIVE_SERVER_PORT=${NATIVE_SERVER_PORT}`,
+          details: { expectedPort, defaultPort: NATIVE_SERVER_PORT },
         });
 
         // Connectivity check
         const pingUrl = new URL('/ping', url);
         const ping = await checkConnectivity(pingUrl.toString(), 1500);
+        const listener = ping.ok ? null : describePortListener(expectedPort);
         checks.push({
           id: 'connectivity',
           title: 'Connectivity',
           status: ping.ok ? 'ok' : 'warn',
           message: ping.ok
             ? `GET ${pingUrl} -> ${ping.status}`
-            : `GET ${pingUrl} failed (${ping.error || 'unknown error'})`,
+            : listener
+              ? `Port ${expectedPort} is already in use by ${listener}. This bridge will not choose another port.`
+              : `GET ${pingUrl} failed (${ping.error || 'unknown error'})`,
           details: {
-            hint: 'If the server is not running, click "Connect" in the extension and retry.',
+            listener,
+            hint: listener
+              ? 'Stop that process or set CHROME_MCP_PORT, then update the extension port and your MCP client by hand.'
+              : 'If the server is not running, click "Connect" in the extension and retry.',
           },
         });
         if (!ping.ok) nextSteps.push('Click "Connect" in the extension, then re-run doctor');
@@ -1051,7 +1072,7 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
       node: { version: process.version, execPath: process.execPath },
       package: { name: packageName, version: packageVersion, rootDir, distDir },
       command: { canonical: commandInfo.canonical, aliases: commandInfo.aliases },
-      nativeHost: { hostName: HOST_NAME, expectedPort: EXPECTED_PORT },
+      nativeHost: { hostName: HOST_NAME, expectedPort },
     },
     fixes,
     checks,

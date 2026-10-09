@@ -100,12 +100,17 @@ Add the following configuration to your MCP client configuration (using CherrySt
   "mcpServers": {
     "chrome-mcp-server": {
       "type": "streamableHttp",
-      "url": "http://127.0.0.1:12306/mcp",
+      "url": "http://127.0.0.1:13366/mcp",
       "headers": { "Authorization": "Bearer <contents of ~/.chrome-mcp-agent/auth-token>" }
     }
   }
 }
 ```
+
+The default port is **13366**. A client config that still says `12306` must be edited by hand.
+Set `CHROME_MCP_PORT` to listen on another port (`MCP_HTTP_PORT` is the older name and is used only
+when `CHROME_MCP_PORT` is unset). If the chosen port is already taken, the bridge stops and names
+the process that holds it.
 
 #### Using STDIO Connection (Alternative)
 

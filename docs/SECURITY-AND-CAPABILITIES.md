@@ -108,7 +108,12 @@ browser, do not install it, or use a separate Chrome profile (recommended, see t
 
 ## The local bridge (security model)
 
-The bridge listens on **`127.0.0.1:12306`** (loopback only, not reachable from the network). Three layers:
+The bridge listens on **`127.0.0.1:13366`** by default (loopback only, not reachable from the network).
+`CHROME_MCP_PORT` overrides that port (`MCP_HTTP_PORT` is the older name, used only when
+`CHROME_MCP_PORT` is unset). If the port is busy, the bridge stops and names the process that holds
+it. Client configs that still point at the previous default, port 12306, must be edited by hand.
+
+Three layers:
 
 1. The `Host` header must be a loopback name, which defeats DNS rebinding from web pages.
 2. If an `Origin` header is present, it must be an exact extension or loopback origin.

@@ -1,3 +1,5 @@
+import { DEFAULT_SERVER_PORT } from 'chrome-mcp-shared';
+
 export enum NATIVE_MESSAGE_TYPE {
   START = 'start',
   STARTED = 'started',
@@ -8,7 +10,7 @@ export enum NATIVE_MESSAGE_TYPE {
   ERROR = 'error',
 }
 
-export const NATIVE_SERVER_PORT = 12306;
+export const NATIVE_SERVER_PORT = DEFAULT_SERVER_PORT;
 
 // Timeout constants (in milliseconds)
 export const TIMEOUTS = {
@@ -76,13 +78,38 @@ export const CHROME_MCP_PORT_ENV = 'CHROME_MCP_PORT';
 export const MCP_HTTP_PORT_ENV = 'MCP_HTTP_PORT';
 
 /**
+ * Read the port override. CHROME_MCP_PORT wins over MCP_HTTP_PORT.
+ * An empty value means "use the built-in default". A set but invalid value is an error.
+ */
+export function parseChromeMcpPortEnv(env: NodeJS.ProcessEnv = process.env): {
+  port: number | null;
+  error?: string;
+} {
+  const chrome = env[CHROME_MCP_PORT_ENV];
+  const fallback = env[MCP_HTTP_PORT_ENV];
+  const usingChrome = chrome !== undefined && String(chrome).trim() !== '';
+  const raw = usingChrome ? chrome : fallback;
+  const source = usingChrome ? CHROME_MCP_PORT_ENV : MCP_HTTP_PORT_ENV;
+  if (raw === undefined || String(raw).trim() === '') return { port: null };
+  const text = String(raw).trim();
+  if (!/^[0-9]+$/.test(text)) {
+    return { port: null, error: `${source} must be an integer from 1 to 65535 (got ${text})` };
+  }
+  const port = Number(text);
+  if (port < 1 || port > 65535) {
+    return { port: null, error: `${source} must be an integer from 1 to 65535 (got ${text})` };
+  }
+  return { port };
+}
+
+/**
  * Get the actual port the Chrome MCP server is listening on.
- * Priority: CHROME_MCP_PORT env > MCP_HTTP_PORT env > NATIVE_SERVER_PORT default
+ * Priority: CHROME_MCP_PORT env > MCP_HTTP_PORT env > NATIVE_SERVER_PORT default.
+ * Invalid overrides fall back here; the bridge rejects them before it listens.
  */
 export function getChromeMcpPort(): number {
-  const raw = process.env[CHROME_MCP_PORT_ENV] || process.env[MCP_HTTP_PORT_ENV];
-  const port = raw ? Number.parseInt(String(raw), 10) : NaN;
-  return Number.isFinite(port) && port > 0 && port <= 65535 ? port : NATIVE_SERVER_PORT;
+  const parsed = parseChromeMcpPortEnv();
+  return parsed.port ?? NATIVE_SERVER_PORT;
 }
 
 /**

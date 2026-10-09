@@ -4,7 +4,8 @@ This guide explains how to configure Codex CLI and Claude Code to connect to the
 
 ## Overview
 
-The Chrome MCP Server exposes its MCP interface at `http://127.0.0.1:12306/mcp` (default port).
+The Chrome MCP Server exposes its MCP interface at `http://127.0.0.1:13366/mcp` (default port).
+A client config that still uses port 12306 must be updated by hand.
 Both Codex CLI and Claude Code can connect to this endpoint to use Chrome browser control tools.
 
 > **Authentication.** `/mcp`, `/sse` and `/messages` require a bearer token. The bridge creates it on
@@ -22,7 +23,7 @@ Add the following to your `~/.codex/config.json`:
 {
   "mcpServers": {
     "chrome-mcp": {
-      "url": "http://127.0.0.1:12306/mcp",
+      "url": "http://127.0.0.1:13366/mcp",
       "headers": { "Authorization": "Bearer <contents of ~/.chrome-mcp-agent/auth-token>" }
     }
   }
@@ -34,8 +35,10 @@ Add the following to your `~/.codex/config.json`:
 Set the MCP URL via environment variable before running codex:
 
 ```bash
-export MCP_HTTP_PORT=12306
+export CHROME_MCP_PORT=13366
 ```
+
+`MCP_HTTP_PORT` is the older name. The bridge reads it only when `CHROME_MCP_PORT` is unset.
 
 ## Claude Code Configuration
 
@@ -47,7 +50,7 @@ Add the following to your `~/.claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "chrome-mcp": {
-      "url": "http://127.0.0.1:12306/mcp",
+      "url": "http://127.0.0.1:13366/mcp",
       "headers": { "Authorization": "Bearer <contents of ~/.chrome-mcp-agent/auth-token>" }
     }
   }
@@ -86,7 +89,7 @@ After configuration, the CLI tools should be able to see and use Chrome MCP tool
 If you get "connection refused" errors:
 
 1. Ensure the Chrome extension is installed and the native server is running
-2. Check that the port matches (default: 12306)
+2. Check that the port matches (default: 13366)
 3. Verify no firewall is blocking localhost connections
 4. Run `mcp-chrome-bridge doctor` to diagnose issues
 
@@ -100,16 +103,19 @@ If MCP tools don't appear in the CLI:
 
 ### Port Conflicts
 
-If port 12306 is already in use:
+If port 13366 is already in use, the bridge stops and names the process that holds the port. It does
+not bind a different port on its own.
 
-1. Set a custom port in the extension settings
-2. Update the CLI configuration to match the new port
-3. Run `mcp-chrome-bridge update-port <new-port>` to update the stdio config
+1. Stop that process, or set `CHROME_MCP_PORT` to a free port
+2. Set the same port in the extension popup
+3. Update the CLI configuration to match
+4. Run `mcp-chrome-bridge update-port <new-port>` to update the stdio config
 
 ## Environment Variables
 
 | Variable                     | Description                            | Default |
 | ---------------------------- | -------------------------------------- | ------- |
-| `MCP_HTTP_PORT`              | HTTP port for MCP server               | 12306   |
+| `CHROME_MCP_PORT`            | HTTP port for the MCP server           | 13366   |
+| `MCP_HTTP_PORT`              | Older name for the same port           | 13366   |
 | `MCP_ALLOWED_WORKSPACE_BASE` | Additional allowed workspace directory | (none)  |
 | `CHROME_MCP_NODE_PATH`       | Override Node.js executable path       | (auto)  |

@@ -3,10 +3,12 @@
  * Centralized configuration values and magic constants
  */
 
+import { DEFAULT_SERVER_PORT } from 'chrome-mcp-shared';
+
 // Native Host Configuration
 export const NATIVE_HOST = {
   NAME: 'com.chromemcp.nativehost',
-  DEFAULT_PORT: 12306,
+  DEFAULT_PORT: DEFAULT_SERVER_PORT,
 } as const;
 
 // Chrome Extension Icons

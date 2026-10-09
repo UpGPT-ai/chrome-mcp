@@ -383,7 +383,7 @@
 - **状态**: OPEN
 - **作者**: wyx66624
 - **日期**: 2025-08-31
-- **描述**: 已手动注册mcp-chrome-bridge，12306端口没有进程监听
+- **描述**: 已手动注册mcp-chrome-bridge，13366端口没有进程监听
 
 #### #174 Browser in Docker + Chrome MCP: troubleshooting
 

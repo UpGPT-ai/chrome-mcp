@@ -25,7 +25,7 @@ npm install -g mcp-chrome-bridge
 
 4. **在 CherryStudio 中使用**
 
-类型选streamableHttp，url填http://127.0.0.1:12306/mcp
+类型选streamableHttp，url填http://127.0.0.1:13366/mcp
 
 <img width="675" alt="截屏2025-06-11 15 00 29" src="https://github.com/user-attachments/assets/6631e9e4-57f9-477e-b708-6a285cc0d881" />
 
@@ -38,7 +38,7 @@ npm install -g mcp-chrome-bridge
   "mcpServers": {
     "streamable-mcp-server": {
       "type": "streamable-http",
-      "url": "http://127.0.0.1:12306/mcp"
+      "url": "http://127.0.0.1:13366/mcp"
     }
   }
 }

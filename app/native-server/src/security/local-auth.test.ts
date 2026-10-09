@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
+import { DEFAULT_SERVER_PORT } from 'chrome-mcp-shared';
 import {
   AUTH_DIR_ENV,
   authHeaders,
@@ -15,6 +16,8 @@ import {
   verifyBearer,
 } from './local-auth';
 
+const loopbackPort = String(DEFAULT_SERVER_PORT);
+
 let dir: string;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-auth-'));
@@ -26,17 +29,20 @@ afterEach(() => {
 });
 
 describe('isAllowedHost', () => {
-  test.each(['127.0.0.1:12306', 'localhost:12306', '[::1]:12306', 'LOCALHOST', '127.0.0.1'])(
-    'allows %s',
-    (h) => expect(isAllowedHost(h)).toBe(true),
-  );
+  test.each([
+    `127.0.0.1:${loopbackPort}`,
+    `localhost:${loopbackPort}`,
+    `[::1]:${loopbackPort}`,
+    'LOCALHOST',
+    '127.0.0.1',
+  ])('allows %s', (h) => expect(isAllowedHost(h)).toBe(true));
   test.each([
     undefined,
     '',
     'evil.com',
-    '127.0.0.1.evil.com:12306',
+    `127.0.0.1.evil.com:${loopbackPort}`,
     'localhost.evil.com',
-    '10.0.0.1:12306',
+    `10.0.0.1:${loopbackPort}`,
   ])('rejects %s', (h) => expect(isAllowedHost(h as string | undefined)).toBe(false));
 });
 
@@ -55,7 +61,7 @@ describe('isAllowedOrigin', () => {
   test.each([
     undefined,
     'chrome-extension://abcdefghijklmnopabcdefghijklmnop',
-    'http://127.0.0.1:12306',
+    `http://127.0.0.1:${loopbackPort}`,
     'http://localhost',
   ])('allows %s', (o) => expect(isAllowedOrigin(o)).toBe(true));
   test.each([
@@ -94,8 +100,8 @@ describe('isTokenProtectedPath', () => {
     '/agent/%2e%2e/mcp',
     '/mcp/',
     '/MCP'.toLowerCase() + ';x',
-    'http://127.0.0.1:12306/mcp',
-    'http://127.0.0.1:12306/%6dcp?x=1',
+    `http://127.0.0.1:${loopbackPort}/mcp`,
+    `http://127.0.0.1:${loopbackPort}/%6dcp?x=1`,
     '/mcp#frag',
     '/%',
     '/%E0%A4%A',
@@ -145,7 +151,7 @@ describe('registerLocalAuth hook', () => {
     await f.ready();
     return f;
   }
-  const host = { host: '127.0.0.1:12306' };
+  const host = { host: `127.0.0.1:${loopbackPort}` };
 
   test('rejects bad Host with 403 (DNS rebinding)', async () => {
     const f = await app();

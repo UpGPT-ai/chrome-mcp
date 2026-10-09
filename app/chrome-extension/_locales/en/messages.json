@@ -73,7 +73,7 @@
     "placeholders": {
       "port": {
         "content": "$1",
-        "example": "12306"
+        "example": "13366"
       }
     }
   },

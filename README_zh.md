@@ -98,11 +98,15 @@ mcp-chrome-bridge register
   "mcpServers": {
     "chrome-mcp-server": {
       "type": "streamableHttp",
-      "url": "http://127.0.0.1:12306/mcp"
+      "url": "http://127.0.0.1:13366/mcp"
     }
   }
 }
 ```
+
+默认端口是 **13366**。仍写着 `12306` 的客户端配置需要手动改掉。
+用环境变量 `CHROME_MCP_PORT` 换端口（未设置时才回退到旧名字 `MCP_HTTP_PORT`）。
+端口已被占用时，bridge 会退出并写出占用该端口的进程名。
 
 #### 使用stdio的方式连接（备选）
 

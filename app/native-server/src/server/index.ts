@@ -29,6 +29,7 @@ import { AgentChatService } from '../agent/chat-service';
 import { CodexEngine } from '../agent/engines/codex';
 import { ClaudeEngine } from '../agent/engines/claude';
 import { closeDb } from '../agent/db';
+import { isAddrInUse, portBusyError } from '../port-in-use';
 import { registerAgentRoutes } from './routes';
 import { isAllowedOrigin, registerLocalAuth } from '../security/local-auth';
 
@@ -385,6 +386,7 @@ export class Server {
       this.isRunning = true;
     } catch (err) {
       this.isRunning = false;
+      if (isAddrInUse(err)) throw portBusyError(port);
       throw err;
     }
   }

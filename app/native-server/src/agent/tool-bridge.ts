@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { NATIVE_SERVER_PORT } from '../constant/index.js';
+import { getChromeMcpUrl } from '../constant/index.js';
 import { authHeaders } from '../security/local-auth';
 
 export interface CliToolInvocation {
@@ -22,8 +22,8 @@ export interface CliToolInvocation {
 
 export interface AgentToolBridgeOptions {
   /**
-   * Base URL of the local MCP HTTP endpoint (e.g. http://127.0.0.1:12306/mcp).
-   * If omitted, DEFAULT_SERVER_PORT from chrome-mcp-shared is used.
+   * Base URL of the local MCP HTTP endpoint (e.g. http://127.0.0.1:13366/mcp).
+   * If omitted, getChromeMcpUrl() is used (CHROME_MCP_PORT, then the built-in default).
    */
   mcpUrl?: string;
 }
@@ -41,8 +41,7 @@ export class AgentToolBridge {
   private readonly transport: StreamableHTTPClientTransport;
 
   constructor(options: AgentToolBridgeOptions = {}) {
-    const url =
-      options.mcpUrl || `http://127.0.0.1:${process.env.MCP_HTTP_PORT || NATIVE_SERVER_PORT}/mcp`;
+    const url = options.mcpUrl || getChromeMcpUrl();
 
     this.transport = new StreamableHTTPClientTransport(new URL(url), {
       requestInit: { headers: authHeaders() },

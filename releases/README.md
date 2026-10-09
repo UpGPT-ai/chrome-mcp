@@ -25,7 +25,7 @@
 
 ### Native Server 连接
 
-1. 确保 Native Server 正在运行（默认端口 12306）
+1. 确保 Native Server 正在运行（默认端口 13366）
 2. 在扩展 popup 中输入正确的端口号
 3. 点击"连接"按钮测试连接
 

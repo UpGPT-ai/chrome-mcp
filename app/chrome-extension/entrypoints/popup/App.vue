@@ -31,6 +31,7 @@
                 {{ getMessage('lastUpdatedLabel') }}
                 {{ new Date(serverStatus.lastUpdated).toLocaleTimeString() }}
               </div>
+              <p v-if="legacyPortNotice" class="legacy-port-notice">{{ legacyPortNotice }}</p>
             </div>
 
             <div v-if="showMcpConfig" class="mcp-config-section">
@@ -343,6 +344,7 @@ import {
 } from '@/utils/semantic-similarity-engine';
 import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { LINKS } from '@/common/constants';
+import { DEFAULT_SERVER_PORT, LEGACY_SERVER_PORT } from 'chrome-mcp-shared';
 import { getMessage } from '@/utils/i18n';
 import { useAgentTheme, type AgentThemeId } from '../sidepanel/composables/useAgentTheme';
 
@@ -514,7 +516,8 @@ const runFlow = async (flowId: string) => {
 
 const nativeConnectionStatus = ref<'unknown' | 'connected' | 'disconnected'>('unknown');
 const isConnecting = ref(false);
-const nativeServerPort = ref<number>(12306);
+const nativeServerPort = ref<number>(DEFAULT_SERVER_PORT);
+const legacyPortNotice = ref('');
 
 const serverStatus = ref<{
   isRunning: boolean;
@@ -1192,6 +1195,23 @@ const savePortPreference = async (port: number) => {
   }
 };
 
+const checkLegacyBridge = async () => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 800);
+  try {
+    const response = await fetch(`http://127.0.0.1:${LEGACY_SERVER_PORT}/ping`, {
+      signal: controller.signal,
+    });
+    legacyPortNotice.value = response.ok
+      ? `A bridge is still on port ${LEGACY_SERVER_PORT}. Update your MCP config by hand to http://127.0.0.1:${DEFAULT_SERVER_PORT}/mcp.`
+      : '';
+  } catch {
+    legacyPortNotice.value = '';
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const loadPortPreference = async () => {
   try {
     // eslint-disable-next-line no-undef
@@ -1518,6 +1538,7 @@ onMounted(async () => {
   // Initialize the theme
   await initTheme();
   await loadPortPreference();
+  void checkLegacyBridge();
   await loadModelPreference();
   await checkNativeConnection();
   await checkServerStatus();
@@ -1666,6 +1687,13 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 600;
   color: #1e293b;
+}
+
+.legacy-port-notice {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #92400e;
 }
 
 .model-label {
