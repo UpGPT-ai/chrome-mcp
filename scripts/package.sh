@@ -10,6 +10,16 @@ mkdir -p "$STAGE"
 
 echo "==> build shared";        (cd "$ROOT/packages/shared" && npx tsup src/index.ts --format cjs,esm --dts --clean >/dev/null)
 echo "==> build extension";     (cd "$ROOT/app/chrome-extension" && npx wxt build >/dev/null)
+echo "==> verify extension id"
+node -e "
+const c=require('crypto'),fs=require('fs');
+const m=JSON.parse(fs.readFileSync('$ROOT/app/chrome-extension/.output/chrome-mv3/manifest.json','utf8'));
+if(!m.key){console.error('manifest has no key: set CHROME_EXTENSION_KEY and rebuild');process.exit(1);}
+const h=c.createHash('sha256').update(Buffer.from(m.key,'base64')).digest('hex').slice(0,32);
+const id=[...h].map(x=>String.fromCharCode(97+parseInt(x,16))).join('');
+const want=(fs.readFileSync('$ROOT/app/native-server/src/scripts/constant.ts','utf8').match(/EXTENSION_ID = '([a-p]{32})'/)||[])[1];
+if(id!==want){console.error('extension id '+id+' does not match EXTENSION_ID '+want);process.exit(1);}
+console.log('extension id ok: '+id);"
 echo "==> build native-server"; (cd "$ROOT/app/native-server" && pnpm run build >/dev/null)
 
 cp "$ROOT"/packaging-template/* "$STAGE/"
