@@ -51,3 +51,6 @@ export { storageTool } from './storage';
 export { interceptTool } from './intercept';
 export { fileChooserTool } from './file-chooser';
 export { printPdfTool } from './print-pdf';
+export { grantPermissionTool } from './grant-permission';
+export { clipboardTool } from './clipboard';
+export { requestHumanTool } from './request-human';

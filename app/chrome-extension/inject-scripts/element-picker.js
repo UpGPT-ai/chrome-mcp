@@ -41,7 +41,10 @@
     pendingHoverEvent: null,
     lastHoverEl: null,
     highlighter: null,
+    handoffSessionId: null,
   };
+
+  const HANDOFF_FALLBACK_HOST_ID = '__mcp_human_handoff_host__';
 
   // ============================================================
   // CSS Escape Helper
@@ -636,6 +639,196 @@
   }
 
   // ============================================================
+  // Human handoff (chrome_request_human)
+  // Banner plus optional highlight. Does not set STATE.active and does not
+  // call attachListeners, so page clicks keep working for CAPTCHA and passkeys.
+  // ============================================================
+
+  function removeHandoffBanner() {
+    try {
+      const host = document.getElementById(UI_HOST_ID);
+      if (host && host.getAttribute('data-mcp-human-handoff-host') === 'true') {
+        if (host.remove) host.remove();
+      } else if (host && host.shadowRoot) {
+        const banner = host.shadowRoot.querySelector('[data-mcp-human-handoff]');
+        if (banner && banner.remove) banner.remove();
+      }
+      const fallback = document.getElementById(HANDOFF_FALLBACK_HOST_ID);
+      if (fallback && fallback.remove) fallback.remove();
+    } catch {
+      // Best effort
+    }
+  }
+
+  function handoffBannerNode(sessionId, reason, bannerText) {
+    const banner = document.createElement('div');
+    banner.setAttribute('data-mcp-human-handoff', 'true');
+    Object.assign(banner.style, {
+      font: '14px/1.4 system-ui, sans-serif',
+      color: '#1c1917',
+      background: '#fff',
+      border: '1px solid #d6d3d1',
+      borderRadius: '10px',
+      boxShadow: '0 8px 24px rgba(0,0,0,.18)',
+      padding: '12px 14px',
+      minWidth: '240px',
+      maxWidth: '360px',
+      pointerEvents: 'auto',
+    });
+    const title = document.createElement('p');
+    Object.assign(title.style, { fontWeight: '650', margin: '0 0 6px' });
+    title.textContent = bannerText || 'Waiting for you';
+    banner.appendChild(title);
+    if (reason) {
+      const note = document.createElement('p');
+      Object.assign(note.style, {
+        margin: '0 0 10px',
+        color: '#44403c',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      });
+      note.textContent = reason;
+      banner.appendChild(note);
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Done';
+    Object.assign(button.style, {
+      font: 'inherit',
+      background: '#1c1917',
+      color: '#fff',
+      border: '0',
+      borderRadius: '8px',
+      padding: '6px 12px',
+      cursor: 'pointer',
+    });
+    button.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      try {
+        chrome.runtime.sendMessage({ type: 'human_handoff_done', sessionId: sessionId });
+      } catch {
+        // The background treats a missing click as a timeout.
+      }
+    });
+    banner.appendChild(button);
+    return banner;
+  }
+
+  function mountHandoffBanner(sessionId, reason, bannerText) {
+    removeHandoffBanner();
+    const banner = handoffBannerNode(sessionId, reason, bannerText);
+    const existing = document.getElementById(UI_HOST_ID);
+    if (existing && existing.shadowRoot) {
+      Object.assign(banner.style, {
+        position: 'fixed',
+        top: '12px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: '2147483647',
+      });
+      existing.shadowRoot.appendChild(banner);
+      return;
+    }
+    if (!existing) {
+      const host = document.createElement('div');
+      host.id = UI_HOST_ID;
+      host.setAttribute('data-mcp-human-handoff-host', 'true');
+      Object.assign(host.style, {
+        position: 'fixed',
+        top: '12px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: '2147483647',
+        pointerEvents: 'auto',
+      });
+      const shadow = host.attachShadow({ mode: 'open' });
+      shadow.appendChild(banner);
+      (document.documentElement || document.body).appendChild(host);
+      return;
+    }
+    const host = document.createElement('div');
+    host.id = HANDOFF_FALLBACK_HOST_ID;
+    Object.assign(host.style, {
+      position: 'fixed',
+      top: '12px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: '2147483647',
+      pointerEvents: 'auto',
+    });
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.appendChild(banner);
+    (document.documentElement || document.body).appendChild(host);
+  }
+
+  function locateHandoffElement(ref, selector) {
+    if (ref) {
+      try {
+        const map = window.__claudeElementMap;
+        const held = map && map[ref];
+        const el = held && typeof held.deref === 'function' ? held.deref() : null;
+        if (el instanceof Element) return el;
+      } catch {
+        return null;
+      }
+      return null;
+    }
+    if (selector) {
+      try {
+        const el = document.querySelector(selector);
+        return el instanceof Element ? el : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function startHandoff(payload) {
+    const sessionId = payload && payload.sessionId ? String(payload.sessionId) : '';
+    if (!sessionId) return { highlighted: false, banner: false };
+    STATE.handoffSessionId = sessionId;
+    const role = payload && payload.role ? String(payload.role) : 'both';
+    let highlighted = false;
+    if (role === 'highlight' || role === 'both') {
+      const ref = payload && payload.ref ? String(payload.ref) : '';
+      const selector = payload && payload.selector ? String(payload.selector) : '';
+      const el = locateHandoffElement(ref, selector);
+      if (el) {
+        moveHighlighterTo(el);
+        highlighted = !!(STATE.highlighter && STATE.highlighter.style.display === 'block');
+      }
+    }
+    let banner = false;
+    if (role === 'banner' || role === 'both') {
+      const reason = payload && payload.reason ? String(payload.reason) : '';
+      const bannerText =
+        payload && payload.bannerText ? String(payload.bannerText) : 'Waiting for you';
+      mountHandoffBanner(sessionId, reason, bannerText);
+      banner = true;
+    }
+    return { highlighted: highlighted, banner: banner };
+  }
+
+  function stopHandoff(payload) {
+    const sessionId = payload && payload.sessionId ? String(payload.sessionId) : '';
+    if (sessionId && STATE.handoffSessionId && sessionId !== STATE.handoffSessionId) return;
+    STATE.handoffSessionId = null;
+    removeHandoffBanner();
+    if (!STATE.active) {
+      clearHighlighter();
+      try {
+        const hl = STATE.highlighter;
+        if (hl && hl.remove) hl.remove();
+      } catch {
+        // Best effort
+      }
+      STATE.highlighter = null;
+    }
+  }
+
+  // ============================================================
   // Expose API for Background Script
   // ============================================================
 
@@ -643,6 +836,8 @@
     startSession,
     stopSession,
     setActiveRequest,
+    startHandoff,
+    stopHandoff,
   };
 
   // ============================================================

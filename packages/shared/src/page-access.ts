@@ -1,6 +1,7 @@
 /**
  * Pure helpers for chrome_cookies, chrome_storage, and chrome_intercept.
- * Matching, redaction, and the off-by-default defaults live here.
+ * Grant and clipboard use the same off-by-default record.
+ * Matching, redaction, and the defaults live here.
  * The extension applies them. It does not decide them.
  */
 
@@ -19,6 +20,8 @@ export interface HighRiskFlags {
   cookies: boolean;
   storageValues: boolean;
   intercept: boolean;
+  grantPermission: boolean;
+  clipboard: boolean;
 }
 
 /** Missing keys stay off. Only an explicit true enables a tool. */
@@ -26,6 +29,8 @@ export const HIGH_RISK_DEFAULTS: HighRiskFlags = {
   cookies: false,
   storageValues: false,
   intercept: false,
+  grantPermission: false,
+  clipboard: false,
 };
 
 export type HighRiskToggle = keyof HighRiskFlags;
@@ -37,6 +42,10 @@ const HIGH_RISK_DISABLED: Record<HighRiskToggle, string> = {
     'chrome_storage values are off by default. Enable the storage values toggle in extension options (storage key highRiskTools.storageValues) and retry. Listing keys and IndexedDB names stays available.',
   intercept:
     'chrome_intercept is off by default. Enable the intercept toggle in extension options (storage key highRiskTools.intercept) and retry.',
+  grantPermission:
+    'chrome_grant_permission is off by default. Enable the grantPermission toggle in extension options (storage key highRiskTools.grantPermission) and retry.',
+  clipboard:
+    'chrome_clipboard is off by default. Enable the clipboard toggle in extension options (storage key highRiskTools.clipboard) and retry.',
 };
 
 export function parseHighRiskFlags(stored: unknown): HighRiskFlags {
@@ -45,6 +54,8 @@ export function parseHighRiskFlags(stored: unknown): HighRiskFlags {
     cookies: raw.cookies === true,
     storageValues: raw.storageValues === true,
     intercept: raw.intercept === true,
+    grantPermission: raw.grantPermission === true,
+    clipboard: raw.clipboard === true,
   };
 }
 

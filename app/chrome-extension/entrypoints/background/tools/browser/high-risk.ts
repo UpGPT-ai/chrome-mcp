@@ -1,6 +1,7 @@
 import {
   FILE_CHOOSER_ALLOW_DIRS_KEY,
   HIGH_RISK_STORAGE_KEY,
+  SITE_POLICY_ALLOW_ORIGINS_KEY,
   parseFileAllowDirs,
   parseHighRiskFlags,
   type HighRiskFlags,
@@ -30,5 +31,26 @@ export async function readFileAllowDirs(): Promise<string[] | null | { error: st
     return parseFileAllowDirs(stored[FILE_CHOOSER_ALLOW_DIRS_KEY]);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Missing, empty, and unreadable storage refuse chrome_grant_permission.
+ * A present value is returned for matchSitePolicyOrigin, including malformed lists.
+ * There is no options page yet. Item 8 can own this key later.
+ */
+export async function readSitePolicyAllowOrigins(): Promise<
+  { stored: unknown } | { error: string }
+> {
+  try {
+    const stored = await chrome.storage.local.get(SITE_POLICY_ALLOW_ORIGINS_KEY);
+    if (!stored || !Object.prototype.hasOwnProperty.call(stored, SITE_POLICY_ALLOW_ORIGINS_KEY)) {
+      return { stored: undefined };
+    }
+    return { stored: stored[SITE_POLICY_ALLOW_ORIGINS_KEY] };
+  } catch {
+    return {
+      error: `Site policy could not be read (storage key ${SITE_POLICY_ALLOW_ORIGINS_KEY}). chrome_grant_permission refused.`,
+    };
   }
 }

@@ -16,3 +16,4 @@ export * from './fill-form';
 export * from './pointer-path';
 export * from './page-access';
 export * from './cdp-tools';
+export * from './sensitive-actions';

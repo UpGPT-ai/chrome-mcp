@@ -48,6 +48,9 @@ export class FileHandler {
         case 'saveDownload':
           return this.saveDownload(request?.saveName, request?.base64Data, request?.downloadsDir);
 
+        case 'appendAudit':
+          return this.appendAudit(request?.line);
+
         case 'analyzeTrace': {
           const targetPath = traceFilePath || filePath;
           if (!targetPath) {
@@ -265,6 +268,31 @@ export class FileHandler {
     fs.mkdirSync(path.dirname(finalPath), { recursive: true });
     fs.writeFileSync(finalPath, buffer);
     return { success: true, filePath: finalPath, size: buffer.length };
+  }
+
+  /**
+   * Append one JSONL audit record at ~/.chrome-mcp-agent/audit.log.
+   * 5_000_000 matches AUDIT_ROTATE_BYTES in packages/shared. It is not imported:
+   * this package typechecks against chrome-mcp-shared dist, which lacks new
+   * exports until tsup runs. The line is written as given and is not logged.
+   */
+  private appendAudit(line: unknown): { success: boolean; error?: string } {
+    if (typeof line !== 'string' || !line) {
+      return { success: false, error: 'appendAudit needs a single JSON line' };
+    }
+    if (line.length > 4000 || line.includes('\n') || line.includes('\r') || !line.startsWith('{')) {
+      return { success: false, error: 'appendAudit needs a single JSON line' };
+    }
+    const dir = path.join(os.homedir(), '.chrome-mcp-agent');
+    const filePath = path.join(dir, 'audit.log');
+    fs.mkdirSync(dir, { recursive: true });
+    if (fs.existsSync(filePath) && fs.statSync(filePath).size >= 5_000_000) {
+      const rotated = path.join(dir, 'audit.log.1');
+      if (fs.existsSync(rotated)) fs.rmSync(rotated);
+      fs.renameSync(filePath, rotated);
+    }
+    fs.appendFileSync(filePath, `${line}\n`, 'utf8');
+    return { success: true };
   }
 
   /**
