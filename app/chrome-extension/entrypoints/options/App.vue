@@ -302,12 +302,10 @@ function m(key: string, substitutions?: string | string[]) {
 
 <style scoped>
 .page {
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    Segoe UI,
-    Roboto,
-    sans-serif;
+  font-family: var(--cm-font);
+  background: var(--cm-bg);
+  color: var(--cm-text);
+  min-height: 100vh;
   padding: 16px;
 }
 .topbar {
@@ -318,9 +316,9 @@ function m(key: string, substitutions?: string | string[]) {
 }
 .create,
 .filters {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  background: var(--cm-surface);
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius);
   padding: 12px;
   margin-bottom: 16px;
 }
@@ -338,8 +336,11 @@ label {
 input,
 select,
 textarea {
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius-sm);
+  background: var(--cm-bg);
+  color: var(--cm-text);
+  font-family: inherit;
   padding: 8px;
   font-size: 12px;
 }
@@ -353,18 +354,18 @@ textarea {
   margin-top: 8px;
 }
 button {
-  background: #3b82f6;
-  color: #fff;
+  background: var(--cm-accent);
+  color: var(--cm-accent-contrast);
   border: none;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--cm-radius-sm);
   cursor: pointer;
 }
 button:hover {
-  background: #2563eb;
+  background: color-mix(in srgb, var(--cm-accent) 85%, var(--cm-text));
 }
 .hint {
-  color: #374151;
+  color: var(--cm-text-muted);
   font-size: 12px;
 }
 .table {
@@ -374,7 +375,7 @@ button:hover {
 }
 .table th,
 .table td {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--cm-border);
   text-align: left;
   padding: 8px;
   font-size: 12px;
