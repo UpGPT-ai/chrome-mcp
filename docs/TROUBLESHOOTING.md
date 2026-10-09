@@ -44,8 +44,8 @@ registration with a different ID.
 ## A tool was refused
 
 - High-risk tool off. The error says which tool is off. Cookies, storage values, intercept, permission
-  grants, clipboard and recording are off until you set the matching key to `true` under
-  `highRiskTools` in the extension's `chrome.storage.local`. There is no settings screen for these yet.
+  grants, clipboard and recording are off until you turn them on in the extension popup under Tools
+  (they are stored under `highRiskTools` in `chrome.storage.local`).
 - Site policy denied. The target origin matched the denylist (Chrome internal pages, extension
   pages, the Chrome Web Store, password managers, OS settings) or, in allowlist mode, was not on the
   allowlist. The relevant keys are `sitePolicyMode`, `sitePolicyDenyOrigins` and

@@ -36,7 +36,7 @@ Three paths are exempt from the token check and rely on checks 1 and 2 only: `/p
 ## High-risk tools
 
 Each high-risk capability is a separate switch stored under `highRiskTools` in the extension's
-`chrome.storage.local`. There is no settings screen for these switches yet; the storage keys are the switches.
+`chrome.storage.local`. Switch them in the extension popup under Tools; the popup writes these storage keys.
 
 | Capability        | Default | What it controls                                                            |
 | ----------------- | ------- | --------------------------------------------------------------------------- |
@@ -114,8 +114,7 @@ These items were previously on the roadmap and are now in the code:
 - The trust model is a single user on one machine. Any local process running as your user can read
   the token file and call the bridge.
 - The audit log rotates at 5,000,000 bytes and keeps one previous file; older entries are lost.
-- Inputs whose label is a wrapping `<label>` element can appear unnamed in `chrome_snapshot`.
-- There is no settings screen for the high-risk switches or site policy yet; they are edited in extension storage.
+- The popup is the only settings screen; the high-risk switches and site policy have no options page.
 - The injection defences are heuristic. Do not point an agent at untrusted pages while signed in to
   accounts you cannot afford to lose.
 
