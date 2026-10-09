@@ -950,7 +950,7 @@ function focusNode(id: string) {
   justify-content: space-between;
   padding: 0 12px;
   border: none;
-  background: #ededed;
+  background: var(--cm-surface);
   z-index: 20;
   pointer-events: none;
 }
@@ -973,18 +973,18 @@ function focusNode(id: string) {
   padding: 10px 12px;
   border-radius: 10px;
   font-size: 12px;
-  color: #111;
-  background: #fff8e1;
-  border: 1px solid #facc15;
+  color: var(--cm-text);
+  background: color-mix(in srgb, var(--cm-warn) 12%, var(--cm-bg));
+  border: 1px solid var(--cm-warn);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 .rr-toast[data-level='info'] {
-  background: #e0f2fe;
-  border-color: #38bdf8;
+  background: color-mix(in srgb, var(--cm-accent) 12%, var(--cm-bg));
+  border-color: var(--cm-accent);
 }
 .rr-toast[data-level='error'] {
-  background: #fee2e2;
-  border-color: #ef4444;
+  background: color-mix(in srgb, var(--cm-danger) 12%, var(--cm-bg));
+  border-color: var(--cm-danger);
 }
 .topbar .left {
   display: flex;
@@ -1100,34 +1100,34 @@ function focusNode(id: string) {
 }
 .top-btn.active {
   background: var(--rr-accent);
-  color: #fff;
+  color: var(--cm-accent-contrast);
   border-color: var(--rr-accent);
 }
 .top-btn.primary {
   background: var(--rr-accent);
-  color: #fff;
+  color: var(--cm-accent-contrast);
   border-color: var(--rr-accent);
 }
 .top-btn.primary:hover {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: color-mix(in srgb, var(--cm-accent) 85%, var(--cm-text));
+  border-color: color-mix(in srgb, var(--cm-accent) 85%, var(--cm-text));
 }
 .top-btn.success {
-  background: #10b981;
-  color: #fff;
-  border-color: #10b981;
+  background: var(--cm-ok);
+  color: var(--cm-accent-contrast);
+  border-color: var(--cm-ok);
 }
 .top-btn.success:hover {
-  background: #059669;
-  border-color: #059669;
+  background: color-mix(in srgb, var(--cm-ok) 85%, var(--cm-text));
+  border-color: color-mix(in srgb, var(--cm-ok) 85%, var(--cm-text));
 }
 .top-btn.danger {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--cm-danger) 10%, transparent);
   color: var(--rr-danger);
-  border-color: rgba(239, 68, 68, 0.3);
+  border-color: color-mix(in srgb, var(--cm-danger) 30%, transparent);
 }
 .top-btn.danger:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: color-mix(in srgb, var(--cm-danger) 20%, transparent);
   border-color: var(--rr-danger);
 }
 .top-btn.ghost {
@@ -1172,7 +1172,7 @@ function focusNode(id: string) {
 }
 .notice-top {
   background: var(--rr-brand-strong);
-  color: #fff;
+  color: var(--cm-accent-contrast);
   padding: 8px 12px;
   display: flex;
   align-items: center;
@@ -1196,8 +1196,9 @@ function focusNode(id: string) {
   justify-content: center;
 }
 .rr-dialog {
-  background: #fff;
-  border-radius: 8px;
+  background: var(--cm-bg);
+  color: var(--cm-text);
+  border-radius: var(--cm-radius);
   width: 520px;
   max-width: 96vw;
   max-height: 90vh;
@@ -1212,15 +1213,16 @@ function focusNode(id: string) {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--cm-border);
 }
 .rr-header .title {
   font-weight: 600;
 }
 .rr-header .close {
   border: none;
-  background: #f3f4f6;
-  border-radius: 6px;
+  background: var(--cm-surface);
+  color: var(--cm-text);
+  border-radius: var(--cm-radius-sm);
   padding: 4px 8px;
   cursor: pointer;
 }
@@ -1230,16 +1232,16 @@ function focusNode(id: string) {
 }
 .rr-footer {
   padding: 12px 16px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--cm-border);
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 .rr-footer .primary {
-  background: #2563eb;
-  color: #fff;
+  background: var(--cm-accent);
+  color: var(--cm-accent-contrast);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--cm-radius-sm);
   padding: 8px 14px;
   cursor: pointer;
 }
@@ -1251,13 +1253,15 @@ function focusNode(id: string) {
 }
 .row > label {
   width: 88px;
-  color: #374151;
+  color: var(--cm-text-muted);
 }
 .row > input,
 .row > textarea {
   flex: 1;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  border: 1px solid var(--cm-border);
+  background: var(--cm-bg);
+  color: var(--cm-text);
+  border-radius: var(--cm-radius-sm);
   padding: 6px 8px;
 }
 .row > textarea {

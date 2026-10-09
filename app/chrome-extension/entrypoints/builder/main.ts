@@ -1,7 +1,8 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 
-// Tailwind first, then custom tokens
+// Shared design tokens, then Tailwind
+import '../styles/tokens.css';
 import '../styles/tailwind.css';
 
 createApp(App).mount('#app');
