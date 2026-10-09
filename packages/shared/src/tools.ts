@@ -65,6 +65,7 @@ export const TOOL_NAMES = {
     GRANT_PERMISSION: 'chrome_grant_permission',
     CLIPBOARD: 'chrome_clipboard',
     REQUEST_HUMAN: 'chrome_request_human',
+    RELOAD_EXTENSION: 'chrome_reload_extension',
     RECORDING: 'chrome_recording',
     FLOW_LIST: 'chrome_flow_list',
     FLOW_RUN: 'chrome_flow_run',
@@ -2218,6 +2219,15 @@ export const TOOL_SCHEMAS: Tool[] = [
       },
       required: ['action'],
     },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.RELOAD_EXTENSION,
+    description: [
+      'Reload this Chrome MCP extension so a new build, permission, or tool list takes effect.',
+      'The reply is sent first and the reload starts about one second later. The bridge connection drops for a few seconds and reconnects on its own. Open tabs and pages are not touched.',
+      'Each call is written to the audit log. Takes no arguments.',
+    ].join('\n'),
+    inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: TOOL_NAMES.BROWSER.REQUEST_HUMAN,
