@@ -2,6 +2,7 @@ import type { Edge, Flow, NodeBase, Step } from '../types';
 import { STEP_TYPES } from '@/common/step-types';
 import { recordingSession } from './session-manager';
 import { mapStepToNodeConfig, EDGE_LABELS } from 'chrome-mcp-shared';
+import { noteSemanticNavigate } from './semantic-recording';
 
 const WORKFLOW_VERSION = 1;
 
@@ -43,6 +44,7 @@ export function addNavigationStep(flow: Flow, url: string): void {
   const sessFlow = recordingSession.getFlow?.();
   if (recordingSession.getStatus?.() === 'recording' && sessFlow === flow) {
     recordingSession.appendSteps([step]);
+    noteSemanticNavigate(step.id, url);
     return;
   }
 

@@ -5,6 +5,11 @@ import { recordingSession as session } from './session-manager';
 import { createInitialFlow, addNavigationStep } from './flow-builder';
 import { initBrowserEventListeners } from './browser-event-listener';
 import { initContentMessageHandler } from './content-message-handler';
+import {
+  beginSemanticRecording,
+  finishSemanticRecording,
+  initSemanticRecording,
+} from './semantic-recording';
 
 /** Timeout for waiting for the top-frame content script to acknowledge stop. */
 const STOP_BARRIER_TOP_TIMEOUT_MS = 5000;
@@ -133,12 +138,14 @@ class RecorderManagerImpl {
     if (this.initialized) return;
     initBrowserEventListeners(session);
     initContentMessageHandler(session);
+    initSemanticRecording();
     this.initialized = true;
   }
 
   async start(meta?: Partial<Flow>): Promise<{ success: boolean; error?: string }> {
-    if (session.getStatus() !== 'idle')
+    if (session.getStatus() !== 'idle') {
       return { success: false, error: 'Recording already active' };
+    }
     // Resolve active tab
     const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!active?.id) return { success: false, error: 'Active tab not found' };
@@ -146,6 +153,7 @@ class RecorderManagerImpl {
     // Initialize flow & session
     const flow: Flow = createInitialFlow(meta);
     await session.startSession(flow, active.id);
+    beginSemanticRecording({ id: flow.id, name: flow.name });
 
     // Ensure recorder available and start listening
     await ensureRecorderInjected(active.id);
@@ -190,6 +198,8 @@ class RecorderManagerImpl {
   async stop(): Promise<{ success: boolean; error?: string; flow?: Flow }> {
     const currentStatus = session.getStatus();
     if (currentStatus === 'idle' || !session.getFlow()) {
+      const saved = await finishSemanticRecording();
+      if (saved) return { success: true };
       return { success: false, error: 'No active recording' };
     }
 
@@ -244,6 +254,12 @@ class RecorderManagerImpl {
       } catch {}
 
       await saveFlow(flow);
+    }
+
+    try {
+      await finishSemanticRecording();
+    } catch (e) {
+      console.warn('RecorderManager: semantic flow save failed', e);
     }
 
     // Return with barrier status

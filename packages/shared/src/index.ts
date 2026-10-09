@@ -17,3 +17,4 @@ export * from './pointer-path';
 export * from './page-access';
 export * from './cdp-tools';
 export * from './sensitive-actions';
+export * from './semantic-flow';

@@ -222,13 +222,14 @@ export function parseGrantPermissionArgs(args: unknown): ParsedGrantArgs | { err
 export function matchSitePolicyOrigin(
   origin: string,
   stored: unknown,
+  toolName = 'chrome_grant_permission',
 ): { origin: string } | { error: string } {
   const normalized = httpOrigin(origin);
   if ('error' in normalized) return normalized;
   const key = SITE_POLICY_ALLOW_ORIGINS_KEY;
   if (stored === undefined || stored === null) {
     return {
-      error: `Origin is not listed in site policy (storage key ${key}). chrome_grant_permission refused.`,
+      error: `Origin is not listed in site policy (storage key ${key}). ${toolName} refused.`,
     };
   }
   if (!Array.isArray(stored)) {
@@ -242,7 +243,7 @@ export function matchSitePolicyOrigin(
   }
   if (!listed.has(normalized.origin)) {
     return {
-      error: `Origin ${normalized.origin} is not listed in site policy (storage key ${key}). chrome_grant_permission refused.`,
+      error: `Origin ${normalized.origin} is not listed in site policy (storage key ${key}). ${toolName} refused.`,
     };
   }
   return { origin: normalized.origin };

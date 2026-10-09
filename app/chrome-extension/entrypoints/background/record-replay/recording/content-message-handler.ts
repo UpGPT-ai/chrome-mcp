@@ -1,6 +1,30 @@
 import type { RecordingSessionManager } from './session-manager';
 import type { Step, VariableDef } from '../types';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
+import { noteRecorderSteps } from './semantic-recording';
+
+function copyForSemantic(
+  step: Step,
+  sender: chrome.runtime.MessageSender,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...step };
+  if (typeof sender.url === 'string' && typeof copy.pageUrl !== 'string') copy.pageUrl = sender.url;
+  if (typeof sender.frameId === 'number' && sender.frameId > 0 && typeof sender.url === 'string') {
+    const prior = Array.isArray(copy.framePath)
+      ? copy.framePath.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    if (!prior.includes(sender.url)) copy.framePath = prior.concat(sender.url);
+  }
+  return copy;
+}
+
+function noteSemanticCopies(steps: Step[], sender: chrome.runtime.MessageSender): void {
+  try {
+    noteRecorderSteps(steps.map((step) => copyForSemantic(step, sender)));
+  } catch {
+    // Semantic notes are additive. The DAG recording still keeps the step.
+  }
+}
 
 /**
  * Initialize the content message handler for receiving steps and variables from content scripts.
@@ -11,7 +35,7 @@ import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
  * - 'finalize': Content script has finished flushing (used during stop barrier)
  */
 export function initContentMessageHandler(session: RecordingSessionManager): void {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
       if (!message || message.type !== TOOL_MESSAGE_TYPES.RR_RECORDER_EVENT) return false;
 
@@ -39,6 +63,7 @@ export function initContentMessageHandler(session: RecordingSessionManager): voi
             : [];
         if (steps.length > 0) {
           session.appendSteps(steps);
+          noteSemanticCopies(steps, sender);
         }
       }
 
@@ -60,6 +85,7 @@ export function initContentMessageHandler(session: RecordingSessionManager): voi
           : [];
         if (steps.length > 0) {
           session.appendSteps(steps);
+          noteSemanticCopies(steps, sender);
         }
         if (variables.length > 0) {
           session.appendVariables(variables);

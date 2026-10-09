@@ -65,6 +65,10 @@ export const TOOL_NAMES = {
     GRANT_PERMISSION: 'chrome_grant_permission',
     CLIPBOARD: 'chrome_clipboard',
     REQUEST_HUMAN: 'chrome_request_human',
+    RECORDING: 'chrome_recording',
+    FLOW_LIST: 'chrome_flow_list',
+    FLOW_RUN: 'chrome_flow_run',
+    FLOW_EXPORT: 'chrome_flow_export',
   },
   RECORD_REPLAY: {
     FLOW_RUN: 'record_replay_flow_run',
@@ -2256,6 +2260,89 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.RECORDING,
+    description: [
+      'Start, stop, or check a DOM-semantic recording on the active tab. Each step stores click, fill, select, check, navigate, submit, or key, plus a locator (role and accessible name, label, name, id, text, stable CSS, frame path) and the page URL. Mouse paths and coordinates are not stored. Flow format version is 1.',
+      'Password fields and fields whose autocomplete is a payment or one-time code are stored as {secret: true}. Replay prompts for those values.',
+      'Default off until highRiskTools.recording is true. action start also requires the active tab origin in chrome.storage.local sitePolicyAllowOrigins. A tabId other than the active tab is refused. stop and status do not check site policy. Popup record buttons are user actions, not this tool.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['start', 'stop', 'status'],
+          description: 'start begins a recording, stop saves it, status reports it.',
+        },
+        name: {
+          type: 'string',
+          description: 'Optional name for action start.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Must be the active tab when action is start. Omit to use the active tab.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FLOW_LIST,
+    description: [
+      'List saved DOM-semantic flows. Format version is 1. Each flow is a step list an agent can pass to chrome_flow_run or chrome_flow_export. Secret values stay {secret: true}.',
+      'Default off until highRiskTools.recording is true. Does not check site policy.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Optional name or id filter.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FLOW_RUN,
+    description: [
+      'Replay a DOM-semantic flow (format version 1) on a tab. Locators try role and accessible name, then label, name, id, text, and stable CSS. A miss returns step N could not be found.',
+      'params is a flat map of strings keyed by the 1-based step number or by the locator htmlName, id, label, or accessible name. Secret steps stay {secret: true} until params supplies a string. A missing secret returns needsSecret and does not run. Resolved secret values are not echoed.',
+      'Default off until highRiskTools.recording is true. Does not check site policy.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        flowId: { type: 'string', description: 'Id of a saved semantic flow.' },
+        params: {
+          type: 'object',
+          description:
+            'String overrides. Keys are 1-based step numbers or locator htmlName, id, label, or name. Nested objects are rejected.',
+        },
+        tabId: { type: 'number', description: 'Target tab (default: active tab).' },
+      },
+      required: ['flowId'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FLOW_EXPORT,
+    description: [
+      'Export a DOM-semantic flow as a plain JSON array of tool calls (chrome_navigate, chrome_click_element, chrome_fill_or_select, chrome_keyboard) an agent can read and edit. Secret values stay {secret: true}. Mouse paths are not included. Flow format version is 1.',
+      'Default off until highRiskTools.recording is true. Does not check site policy.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        flowId: { type: 'string', description: 'Id of a saved semantic flow.' },
+      },
+      required: ['flowId'],
     },
   },
 ];

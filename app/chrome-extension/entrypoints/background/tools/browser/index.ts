@@ -54,3 +54,9 @@ export { printPdfTool } from './print-pdf';
 export { grantPermissionTool } from './grant-permission';
 export { clipboardTool } from './clipboard';
 export { requestHumanTool } from './request-human';
+export {
+  recordingTool,
+  semanticFlowListTool,
+  semanticFlowRunTool,
+  semanticFlowExportTool,
+} from './semantic-recorder';

@@ -74,16 +74,16 @@
           <h2 class="section-title">Quick Tools</h2>
           <div class="rr-icon-buttons">
             <button
-              class="rr-icon-btn rr-icon-btn-record rr-icon-btn-coming-soon has-tooltip"
+              class="rr-icon-btn rr-icon-btn-record has-tooltip"
               @click="startRecording"
-              data-tooltip="Recording feature in development"
+              data-tooltip="Start recording"
             >
-              <RecordIcon :recording="false" />
+              <RecordIcon :recording="rrRecording" />
             </button>
             <button
-              class="rr-icon-btn rr-icon-btn-stop rr-icon-btn-coming-soon has-tooltip"
+              class="rr-icon-btn rr-icon-btn-stop has-tooltip"
               @click="stopRecording"
-              data-tooltip="Recording feature in development"
+              data-tooltip="Stop recording"
             >
               <StopIcon />
             </button>
@@ -433,38 +433,43 @@ function isFlowBoundToCurrent(flow: any) {
 }
 
 // Run history and overrides are viewed in the sidebar page
+const refreshRecordingStatus = async () => {
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: BACKGROUND_MESSAGE_TYPES.RR_GET_RECORDING_STATUS,
+    });
+    rrRecording.value = res?.status === 'recording' || res?.status === 'paused';
+  } catch {
+    /* ignore */
+  }
+};
+
 const startRecording = async () => {
-  // TODO: record & replay feature in development, intercept for now
-  showComingSoonToast('Record & Replay');
-  return;
-  // if (rrRecording.value) return;
-  // try {
-  //   const res = await chrome.runtime.sendMessage({
-  //     type: BACKGROUND_MESSAGE_TYPES.RR_START_RECORDING,
-  //     meta: { name: 'New Recording' },
-  //   });
-  //   rrRecording.value = !!(res && res.success);
-  // } catch (e) {
-  //   console.error('Failed to start recording:', e);
-  //   rrRecording.value = false;
-  // }
+  if (rrRecording.value) return;
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: BACKGROUND_MESSAGE_TYPES.RR_START_RECORDING,
+      meta: { name: 'New Recording' },
+    });
+    rrRecording.value = !!(res && res.success);
+  } catch (e) {
+    console.error('Failed to start recording:', e);
+    rrRecording.value = false;
+  }
 };
 
 const stopRecording = async () => {
-  // TODO: record & replay feature in development, intercept for now
-  showComingSoonToast('Record & Replay');
-  return;
-  // if (!rrRecording.value) return;
-  // try {
-  //   const res = await chrome.runtime.sendMessage({
-  //     type: BACKGROUND_MESSAGE_TYPES.RR_STOP_RECORDING,
-  //   });
-  //   rrRecording.value = false;
-  //   if (res && res.success) await loadFlows();
-  // } catch (e) {
-  //   console.error('Failed to stop recording:', e);
-  //   rrRecording.value = false;
-  // }
+  if (!rrRecording.value) return;
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: BACKGROUND_MESSAGE_TYPES.RR_STOP_RECORDING,
+    });
+    rrRecording.value = false;
+    if (res && res.success) await loadFlows();
+  } catch (e) {
+    console.error('Failed to stop recording:', e);
+    rrRecording.value = false;
+  }
 };
 
 const runFlow = async (flowId: string) => {
@@ -1545,6 +1550,7 @@ onMounted(async () => {
   await refreshStorageStats();
   await loadCacheStats();
   await loadFlows();
+  await refreshRecordingStatus();
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     currentTabUrl.value = tab?.url || '';

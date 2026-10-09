@@ -14,6 +14,22 @@
     BATCH_SEND_MS: 100,
     SCROLL_DEBOUNCE_MS: 350,
     SENSITIVE_INPUT_TYPES: new Set(['password']),
+    // keep in sync with isSecretField in packages/shared/src/semantic-flow.ts
+    SECRET_AUTOCOMPLETE: new Set([
+      'cc-name',
+      'cc-given-name',
+      'cc-additional-name',
+      'cc-family-name',
+      'cc-number',
+      'cc-exp',
+      'cc-exp-month',
+      'cc-exp-year',
+      'cc-csc',
+      'cc-type',
+      'one-time-code',
+      'current-password',
+      'new-password',
+    ]),
     UI_MAX_STEPS: 30,
     // Maximum time to hold flush while user is typing (prevents unbounded batch accumulation)
     MAX_TYPING_HOLD_MS: 1500,
@@ -172,6 +188,158 @@
       return null;
     }
   };
+
+  function clipText(value, max) {
+    const text = String(value || '')
+      .replace(/[\r\n\t]/g, ' ')
+      .trim();
+    if (!text) return '';
+    return text.length > max ? text.slice(0, max) : text;
+  }
+
+  function isSecretControl(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    if (type === 'password' || CONFIG.SENSITIVE_INPUT_TYPES.has(type)) return true;
+    const raw = (el.getAttribute && el.getAttribute('autocomplete')) || '';
+    const tokens = String(raw).toLowerCase().split(/\s+/).filter(Boolean);
+    for (let i = 0; i < tokens.length; i++) {
+      if (CONFIG.SECRET_AUTOCOMPLETE.has(tokens[i])) return true;
+    }
+    return false;
+  }
+
+  function isSubmitControl(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    if (tag === 'button') return type === '' || type === 'submit';
+    if (tag === 'input') return type === 'submit' || type === 'image';
+    return false;
+  }
+
+  function fieldMeta(el) {
+    return {
+      type: ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase(),
+      autocomplete: (el.getAttribute && el.getAttribute('autocomplete')) || '',
+      tag: (el.tagName || '').toLowerCase(),
+    };
+  }
+
+  function implicitRole(el) {
+    const explicit = ((el.getAttribute && el.getAttribute('role')) || '').toLowerCase();
+    if (explicit) return explicit;
+    const tag = (el.tagName || '').toLowerCase();
+    const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    if (tag === 'a' && el.hasAttribute && el.hasAttribute('href')) return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'summary') return 'button';
+    if (tag === 'input') {
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      if (type === 'submit' || type === 'button' || type === 'reset' || type === 'image')
+        return 'button';
+      if (type === 'hidden' || type === 'file') return '';
+      return 'textbox';
+    }
+    return '';
+  }
+
+  function associatedLabel(el) {
+    if (el.id) {
+      try {
+        const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lab) return clipText(lab.textContent, 120);
+      } catch {}
+    }
+    const wrap = el.closest && el.closest('label');
+    if (wrap) return clipText(wrap.textContent, 120);
+    return '';
+  }
+
+  function accessibleName(el) {
+    const aria = el.getAttribute && el.getAttribute('aria-label');
+    if (aria && String(aria).trim()) return clipText(aria, 120);
+    const labelledBy = (el.getAttribute && el.getAttribute('aria-labelledby')) || '';
+    if (labelledBy) {
+      const parts = [];
+      const ids = String(labelledBy).split(/\s+/);
+      for (let i = 0; i < ids.length; i++) {
+        const node = ids[i] && document.getElementById(ids[i]);
+        if (node) parts.push(clipText(node.textContent, 120));
+      }
+      const joined = parts.filter(Boolean).join(' ');
+      if (joined) return clipText(joined, 120);
+    }
+    const label = associatedLabel(el);
+    if (label) return label;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'button' || tag === 'a' || tag === 'summary') return clipText(el.textContent, 120);
+    const placeholder = el.getAttribute && el.getAttribute('placeholder');
+    if (placeholder) return clipText(placeholder, 120);
+    const title = el.getAttribute && el.getAttribute('title');
+    if (title) return clipText(title, 120);
+    return '';
+  }
+
+  function stableCss(el) {
+    if (el.id) {
+      try {
+        const idSel = `#${CSS.escape(el.id)}`;
+        if (document.querySelectorAll(idSel).length === 1) return idSel;
+      } catch {}
+    }
+    const attrs = ['data-testid', 'data-test', 'data-qa', 'data-cy', 'name'];
+    for (let i = 0; i < attrs.length; i++) {
+      const value = el.getAttribute && el.getAttribute(attrs[i]);
+      if (!value) continue;
+      try {
+        const sel = `[${attrs[i]}="${CSS.escape(value)}"]`;
+        if (document.querySelectorAll(sel).length === 1) return sel;
+      } catch {}
+    }
+    return SelectorEngine._generateSelector(el) || '';
+  }
+
+  function captureLocator(el) {
+    if (!el || el.nodeType !== 1) return undefined;
+    const role = implicitRole(el);
+    const name = accessibleName(el);
+    const label = associatedLabel(el);
+    const htmlName = (el.getAttribute && el.getAttribute('name')) || '';
+    const id = el.id || '';
+    const css = stableCss(el);
+    const locator = {};
+    if (role) locator.role = role;
+    if (name) locator.name = name;
+    if (label) locator.label = label;
+    if (htmlName) locator.htmlName = htmlName;
+    if (id) locator.id = id;
+    const textRole =
+      role === 'button' || role === 'link' || role === 'checkbox' || role === 'radio';
+    if (textRole && !isSecretControl(el)) {
+      const text = clipText(el.innerText || el.textContent || '', 80);
+      if (text) locator.text = text;
+    }
+    if (css) locator.css = css;
+    return locator;
+  }
+
+  function secretPlaceholder(recorder, el, previous) {
+    const placeholder = /^\{(?:var_[a-z0-9]{4}|[a-zA-Z_][a-zA-Z0-9_]*)\}$/;
+    if (
+      typeof previous === 'string' &&
+      placeholder.test(previous) &&
+      previous.indexOf('{file_') !== 0
+    ) {
+      return previous;
+    }
+    const varKey = el.name ? String(el.name) : `var_${Math.random().toString(36).slice(2, 6)}`;
+    recorder._addVariable(varKey, true, '');
+    return `{${varKey}}`;
+  }
 
   // ================================================================
   // 2) UI CLASS (injected via constructor)
@@ -678,13 +846,9 @@
         return existing;
       }
 
-      // Check if this is a sensitive field
-      const isSensitive =
-        this.hideInputValues ||
-        (!isContentEditable &&
-          CONFIG.SENSITIVE_INPUT_TYPES.has(
-            ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase(),
-          ));
+      // Sensitive fields must never read el.value back. A password, payment, or
+      // one-time-code would otherwise replace the placeholder on flush.
+      const isSensitive = this.hideInputValues || isSecretControl(el);
 
       if (isSensitive) {
         // Return existing variable or create new one (should already exist from initial capture)
@@ -983,6 +1147,10 @@
 
     _pushStep(step) {
       step.id = step.id || `step_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      try {
+        if (!step.pageUrl) step.pageUrl = String(location.href || '');
+        if (!step.pageTitle) step.pageTitle = String(document.title || '');
+      } catch {}
       // In iframes, forward to top for aggregation (compute frame selector there)
       if (window !== window.top) {
         try {
@@ -1242,6 +1410,20 @@
         const gref = SelectorEngine._ensureGlobalRef && SelectorEngine._ensureGlobalRef(el);
         if (gref) target.ref = gref;
       } catch {}
+      const control = (el.closest && el.closest('button, input')) || el;
+      const submit = isSubmitControl(control);
+      if (submit && target) target.submit = true;
+      const clickStep = (type) => {
+        const step = {
+          type,
+          target,
+          locator: captureLocator(control && control !== el ? control : el),
+          field: fieldMeta(control || el),
+          screenshotOnFail: true,
+        };
+        if (submit) step.submit = true;
+        return step;
+      };
 
       // Double-click detection: if e.detail >= 2 means this is the second click of a dblclick
       if (e.detail >= 2) {
@@ -1251,11 +1433,7 @@
           this._pendingClickTimer = null;
         }
         this._pendingClick = null;
-        this._pushStep({
-          type: 'dblclick',
-          target,
-          screenshotOnFail: true,
-        });
+        this._pushStep(clickStep('dblclick'));
         return;
       }
 
@@ -1269,11 +1447,7 @@
         }
       }
 
-      this._pendingClick = {
-        type: 'click',
-        target,
-        screenshotOnFail: true,
-      };
+      this._pendingClick = clickStep('click');
 
       this._pendingClickTimer = setTimeout(() => {
         if (this._pendingClick) {
@@ -1375,22 +1549,9 @@
       const isContentEditable =
         el.nodeType === 1 && /** @type {HTMLElement} */ (el).isContentEditable === true;
 
-      const isSensitive =
-        this.hideInputValues ||
-        (!isContentEditable &&
-          CONFIG.SENSITIVE_INPUT_TYPES.has(
-            ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase(),
-          ));
-
-      // Get value: use .value for input/textarea, .innerText for contenteditable
-      let value = isContentEditable
-        ? /** @type {HTMLElement} */ (el).innerText || ''
-        : el.value || '';
-      if (isSensitive) {
-        const varKey = el.name ? el.name : `var_${Math.random().toString(36).slice(2, 6)}`;
-        this._addVariable(varKey, true, '');
-        value = `{${varKey}}`;
-      }
+      const field = fieldMeta(el);
+      const secret = isSecretControl(el);
+      const hide = !!this.hideInputValues;
       const nowTs = Date.now();
       const last = this.lastFill.step;
       const sameRef = !!(last && last._recordingRef === elRef);
@@ -1403,9 +1564,24 @@
         last.target.selector === target.selector
       );
       const within = nowTs - this.lastFill.ts <= CONFIG.INPUT_DEBOUNCE_MS;
-      if ((sameRef || sameSelector) && within) {
+      const merging = (sameRef || sameSelector) && within;
+      // Never read el.value for a secret. The placeholder is what gets stored.
+      let value = '';
+      if (secret || hide) {
+        const previous = merging && last ? last.value : '';
+        value = secretPlaceholder(this, el, previous);
+      } else if (isContentEditable) {
+        value = /** @type {HTMLElement} */ (el).innerText || '';
+      } else {
+        value = el.value || '';
+      }
+      const locator = captureLocator(el);
+      if (merging) {
         // Update existing step's value
         this.lastFill.step.value = value;
+        this.lastFill.step.field = field;
+        this.lastFill.step.locator = locator;
+        if (secret || hide) this.lastFill.step.secret = true;
         this.sessionBuffer.meta.updatedAt = new Date().toISOString();
         this.lastFill.ts = nowTs;
         this.lastFill.el = el; // Keep DOM reference updated for finalize
@@ -1415,7 +1591,8 @@
         this._enqueueForUpsert(this.lastFill.step);
         return;
       }
-      const newStep = { type: 'fill', target, value, screenshotOnFail: true };
+      const newStep = { type: 'fill', target, value, field, locator, screenshotOnFail: true };
+      if (secret || hide) newStep.secret = true;
       newStep._recordingRef = elRef;
       this._pushStep(newStep);
       this.lastFill = { step: newStep, ts: nowTs, el: el };
@@ -1462,13 +1639,25 @@
       if (!this.isRecording || this.isPaused) return;
       const el = e.target;
       if (el instanceof HTMLSelectElement) {
-        const val = el.value;
+        const field = fieldMeta(el);
+        const secret = isSecretControl(el);
+        const locator = captureLocator(el);
         const nowTs = Date.now();
         const elRef = this._getElRef(el);
         const sameRef = !!(this.lastFill.step && this.lastFill.step._recordingRef === elRef);
         const within = nowTs - this.lastFill.ts <= CONFIG.INPUT_DEBOUNCE_MS;
+        let val = '';
+        if (secret) {
+          const previous = sameRef && within && this.lastFill.step ? this.lastFill.step.value : '';
+          val = secretPlaceholder(this, el, previous);
+        } else {
+          val = el.value;
+        }
         if (sameRef && within) {
           this.lastFill.step.value = val;
+          this.lastFill.step.field = field;
+          this.lastFill.step.locator = locator;
+          if (secret) this.lastFill.step.secret = true;
           this.sessionBuffer.meta.updatedAt = new Date().toISOString();
           this.lastFill.ts = nowTs;
           this.lastFill.el = el; // Keep DOM reference updated
@@ -1481,7 +1670,8 @@
           const gref = SelectorEngine._ensureGlobalRef && SelectorEngine._ensureGlobalRef(el);
           if (gref) target.ref = gref;
         } catch {}
-        const st = { type: 'fill', target, value: val, screenshotOnFail: true };
+        const st = { type: 'fill', target, value: val, field, locator, screenshotOnFail: true };
+        if (secret) st.secret = true;
         st._recordingRef = elRef;
         this._pushStep(st);
         this.lastFill = { step: st, ts: nowTs, el: el };
@@ -1496,14 +1686,23 @@
           if (gref) target.ref = gref;
         } catch {}
         const elRef = this._getElRef(el);
+        const locator = captureLocator(el);
+        const field = fieldMeta(el);
         if (tt === 'checkbox') {
-          const st = { type: 'fill', target, value: !!el.checked, screenshotOnFail: true };
+          const st = {
+            type: 'fill',
+            target,
+            value: !!el.checked,
+            field,
+            locator,
+            screenshotOnFail: true,
+          };
           st._recordingRef = elRef;
           this._pushStep(st);
           return;
         }
         if (tt === 'radio') {
-          const st = { type: 'fill', target, value: true, screenshotOnFail: true };
+          const st = { type: 'fill', target, value: true, field, locator, screenshotOnFail: true };
           st._recordingRef = elRef;
           this._pushStep(st);
           return;
@@ -1511,7 +1710,14 @@
         if (tt === 'file') {
           const varKey = el.name ? el.name : `file_${Math.random().toString(36).slice(2, 6)}`;
           this._addVariable(varKey, false, '');
-          this._pushStep({ type: 'fill', target, value: `{${varKey}}`, screenshotOnFail: true });
+          this._pushStep({
+            type: 'fill',
+            target,
+            value: `{${varKey}}`,
+            field,
+            locator,
+            screenshotOnFail: true,
+          });
           return;
         }
       }
@@ -1689,9 +1895,16 @@
         if (isEditable && enterKey) {
           // Commit point: Enter may trigger form submission/navigation
           // Record explicit key action with target first
-          const target = SelectorEngine.buildTarget(/** @type {Element} */ (e.target));
+          const keyEl = /** @type {Element} */ (e.target);
+          const target = SelectorEngine.buildTarget(keyEl);
           const combo = this._formatKeysCombo(e, 'Enter');
-          this._pushStep({ type: 'key', keys: combo, target, screenshotOnFail: false });
+          this._pushStep({
+            type: 'key',
+            keys: combo,
+            target,
+            locator: captureLocator(keyEl),
+            screenshotOnFail: false,
+          });
 
           // Then commit and flush (form submit may navigate away)
           this._commitAndFlush();
@@ -1816,6 +2029,10 @@
 
         const { step, href } = payload;
         if (!step || typeof step !== 'object') return;
+        if (typeof href === 'string' && href) {
+          const prior = Array.isArray(step.framePath) ? step.framePath.slice() : [];
+          if (prior.indexOf(href) === -1) step.framePath = prior.concat([href]);
+        }
 
         // Compose frame selector for iframe steps
         const frameTarget = SelectorEngine.buildTarget(frameEl);

@@ -1,6 +1,6 @@
 /**
  * Pure helpers for chrome_cookies, chrome_storage, and chrome_intercept.
- * Grant and clipboard use the same off-by-default record.
+ * Grant, clipboard, and recording use the same off-by-default record.
  * Matching, redaction, and the defaults live here.
  * The extension applies them. It does not decide them.
  */
@@ -22,6 +22,7 @@ export interface HighRiskFlags {
   intercept: boolean;
   grantPermission: boolean;
   clipboard: boolean;
+  recording: boolean;
 }
 
 /** Missing keys stay off. Only an explicit true enables a tool. */
@@ -31,6 +32,7 @@ export const HIGH_RISK_DEFAULTS: HighRiskFlags = {
   intercept: false,
   grantPermission: false,
   clipboard: false,
+  recording: false,
 };
 
 export type HighRiskToggle = keyof HighRiskFlags;
@@ -46,6 +48,8 @@ const HIGH_RISK_DISABLED: Record<HighRiskToggle, string> = {
     'chrome_grant_permission is off by default. Enable the grantPermission toggle in extension options (storage key highRiskTools.grantPermission) and retry.',
   clipboard:
     'chrome_clipboard is off by default. Enable the clipboard toggle in extension options (storage key highRiskTools.clipboard) and retry.',
+  recording:
+    'Recorder tools (chrome_recording, chrome_flow_list, chrome_flow_run, chrome_flow_export) are off by default. Enable the recording toggle in extension options (storage key highRiskTools.recording) and retry.',
 };
 
 export function parseHighRiskFlags(stored: unknown): HighRiskFlags {
@@ -56,6 +60,7 @@ export function parseHighRiskFlags(stored: unknown): HighRiskFlags {
     intercept: raw.intercept === true,
     grantPermission: raw.grantPermission === true,
     clipboard: raw.clipboard === true,
+    recording: raw.recording === true,
   };
 }
 

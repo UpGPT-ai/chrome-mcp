@@ -172,13 +172,14 @@ describe('untrusted envelope and cookie redaction', () => {
 });
 
 describe('high-risk defaults', () => {
-  test('cookies, storage values, intercept, grant, and clipboard stay off unless set to true', () => {
+  test('cookies, storage values, intercept, grant, clipboard, and recording stay off unless set to true', () => {
     expect(HIGH_RISK_DEFAULTS).toEqual({
       cookies: false,
       storageValues: false,
       intercept: false,
       grantPermission: false,
       clipboard: false,
+      recording: false,
     });
     expect(parseHighRiskFlags(undefined)).toEqual(HIGH_RISK_DEFAULTS);
     expect(
@@ -188,6 +189,7 @@ describe('high-risk defaults', () => {
         intercept: 1,
         grantPermission: 'yes',
         clipboard: 1,
+        recording: 1,
       }),
     ).toEqual({
       cookies: true,
@@ -195,19 +197,24 @@ describe('high-risk defaults', () => {
       intercept: false,
       grantPermission: false,
       clipboard: false,
+      recording: false,
     });
-    expect(parseHighRiskFlags({ grantPermission: true, clipboard: true })).toEqual({
-      cookies: false,
-      storageValues: false,
-      intercept: false,
-      grantPermission: true,
-      clipboard: true,
-    });
+    expect(parseHighRiskFlags({ grantPermission: true, clipboard: true, recording: true })).toEqual(
+      {
+        cookies: false,
+        storageValues: false,
+        intercept: false,
+        grantPermission: true,
+        clipboard: true,
+        recording: true,
+      },
+    );
     expect(highRiskDisabledError('cookies')).toContain('highRiskTools.cookies');
     expect(highRiskDisabledError('storageValues')).toContain('Listing keys');
     expect(highRiskDisabledError('intercept')).toContain('chrome_intercept');
     expect(highRiskDisabledError('grantPermission')).toContain('highRiskTools.grantPermission');
     expect(highRiskDisabledError('clipboard')).toContain('highRiskTools.clipboard');
+    expect(highRiskDisabledError('recording')).toContain('highRiskTools.recording');
   });
 });
 
