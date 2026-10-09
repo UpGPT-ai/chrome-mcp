@@ -1,6 +1,6 @@
 /**
  * Pure snapshot diffing for chrome_snapshot and action observe diffs.
- * A line is keyed by its leading ref token (`ref_12` or `ref_12@3`).
+ * A line is keyed by its leading ref token (`ref_12`, `ref_12@3`, or `cdp_12`).
  * Lines without a ref (for example cross-origin frame markers) are keyed
  * by their full text, so they only show up as added or removed.
  */
@@ -13,7 +13,7 @@ export interface SnapshotLineDiff {
   changed: string[];
 }
 
-const REF_TOKEN = /^(ref_\d+(?:@\d+)?)\b/;
+const REF_TOKEN = /^((?:ref_\d+(?:@\d+)?)|(?:cdp_\d+))\b/;
 const AGENT_REF = /^(ref_\d+)(?:@(\d+))?$/;
 
 export function snapshotLineKey(line: string): string {

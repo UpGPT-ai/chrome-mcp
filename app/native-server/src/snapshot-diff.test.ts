@@ -78,6 +78,7 @@ describe('agent refs', () => {
 
   test('keys a snapshot line by its ref token', () => {
     expect(snapshotLineKey('ref_2@3 textbox "Name" value="a"')).toBe('ref:ref_2@3');
+    expect(snapshotLineKey('cdp_15 button "Upload"')).toBe('ref:cdp_15');
     expect(snapshotLineKey('frame[src="https://x"] (cross-origin, not traversed)')).toBe(
       'raw:frame[src="https://x"] (cross-origin, not traversed)',
     );

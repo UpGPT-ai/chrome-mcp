@@ -59,6 +59,8 @@ export const TOOL_NAMES = {
     COOKIES: 'chrome_cookies',
     STORAGE: 'chrome_storage',
     INTERCEPT: 'chrome_intercept',
+    FILE_CHOOSER: 'chrome_file_chooser',
+    PRINT_PDF: 'chrome_print_pdf',
   },
   RECORD_REPLAY: {
     FLOW_RUN: 'record_replay_flow_run',
@@ -214,7 +216,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.SNAPSHOT,
     description:
-      'Compact accessibility snapshot of the page, one line per element: ref role "name" value=".." and state flags (disabled, checked, expanded, required, invalid). Refs stay stable for the same element while it remains in the DOM.\nPreferred order: chrome_snapshot -> act by ref (chrome_click_element / chrome_fill_or_select / chrome_computer with observe:true) -> read the diff. Take a screenshot only when layout or pixels matter.\nPass `since` (a previous snapshotId) to receive only added, removed, and changed lines.',
+      'Compact accessibility snapshot of the page, one line per element: ref role "name" value=".." and state flags (disabled, checked, expanded, required, invalid). Refs stay stable for the same element while it remains in the DOM.\nPreferred order: chrome_snapshot -> act by ref (chrome_click_element / chrome_fill_or_select / chrome_computer with observe:true) -> read the diff. Take a screenshot only when layout or pixels matter.\nPass `since` (a previous snapshotId) to receive only added, removed, and changed lines.\nPass pierce:true to walk closed shadow roots and cross-origin frames via CDP. Those refs look like cdp_N and are resolved with DOM.resolveNode. chrome_click_element and chrome_fill_or_select still use ref_ refs. If CDP is unavailable the snapshot falls back and says why. If DevTools is attached, pierce fails instead of falling back.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -256,6 +258,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Snapshot this frame only. Use it to read a cross-origin iframe when the extension has host access. Same-origin frames are included automatically and their refs look like ref_12@frameId.',
+        },
+        pierce: {
+          type: 'boolean',
+          description:
+            'Walk closed shadow roots and cross-origin frames with CDP DOM.getDocument pierce and Target.setAutoAttach. Refs look like cdp_N (the backendNodeId) and are resolved with DOM.resolveNode. Omit or false to keep the accessibility snapshot and not attach the debugger. chrome_click_element and chrome_fill_or_select still use ref_ refs.',
         },
       },
       required: [],
@@ -2055,6 +2062,84 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['action'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FILE_CHOOSER,
+    description: [
+      'Open a file chooser by clicking a control, then set absolute file paths on it. Enables Page.setInterceptFileChooserDialog, clicks the control with a CDP mouse event, waits for Page.fileChooserOpened, and calls DOM.setFileInputFiles with that event backendNodeId. Interception is turned off afterwards, including when the chooser does not open.',
+      'Pass a ref (ref_N from chrome_snapshot, or cdp_N from chrome_snapshot with pierce:true) or a CSS selector, plus paths. Paths must be absolute. When chrome.storage.local fileChooserAllowDirs lists directories, each path must sit inside one of them. Until that list is set, any absolute path is accepted.',
+      'Default on. A selectSingle control keeps the first path and reports the rest as ignored.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: {
+          type: 'string',
+          description:
+            'Element ref. ref_N or ref_N@frameId from chrome_snapshot, or cdp_N from a pierce snapshot. Provide ref or selector, not both.',
+        },
+        selector: {
+          type: 'string',
+          description:
+            'CSS selector of the control to click, in the main frame unless frameId is set.',
+        },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Absolute file paths to set on the control.',
+        },
+        frameId: {
+          type: 'number',
+          description: 'Frame for a selector or a ref that has no @frameId suffix.',
+        },
+        timeoutMs: {
+          type: 'number',
+          description: 'How long to wait for the file chooser to open (default 8000, max 60000).',
+        },
+        tabId: { type: 'number', description: 'Target tab (default: active tab).' },
+        windowId: {
+          type: 'number',
+          description: 'Window whose active tab is used when tabId is omitted.',
+        },
+      },
+      required: ['paths'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.PRINT_PDF,
+    description: [
+      'Print the page to a PDF with Page.printToPDF and save it in the downloads directory through the native host. Returns the file path and byte size.',
+      'savePath is a file name or a relative path inside the downloads directory. Absolute paths and .. are rejected. Omit savePath for a timestamped page-YYYYMMDD-HHMMSS.pdf name.',
+      'landscape and printBackground default to false. pageRanges is a CDP string such as "1-5, 8".',
+      'Default on. PDFs larger than about 2.5 MB fail the native messaging size limit instead of being written.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        landscape: { type: 'boolean', description: 'Print landscape. Default false.' },
+        printBackground: {
+          type: 'boolean',
+          description: 'Print background graphics. Default false.',
+        },
+        pageRanges: {
+          type: 'string',
+          description: 'Pages to print, such as "1-5, 8". Omit to print all pages.',
+        },
+        savePath: {
+          type: 'string',
+          description:
+            'File name or relative path inside the downloads directory. Omit for a timestamped name.',
+        },
+        tabId: { type: 'number', description: 'Target tab (default: active tab).' },
+        windowId: {
+          type: 'number',
+          description: 'Window whose active tab is used when tabId is omitted.',
+        },
+      },
+      required: [],
     },
   },
 ];

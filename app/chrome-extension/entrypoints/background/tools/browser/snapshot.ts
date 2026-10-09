@@ -4,15 +4,31 @@ import {
   TOOL_NAMES,
   crossOriginFrameLine,
   diffSnapshotLines,
+  formatPierceSnapshot,
   frameIsSameOrigin,
+  listPierceBackendIds,
   matchFrameSlots,
   parseAgentRef,
+  parseCdpRef,
+  pierceBoxBudget,
+  pierceFailureAction,
+  pierceTreeHasBackendId,
   prefixSnapshotLine,
+  quadIntersectsRect,
   unmatchedFrames,
+  viewportRectFromLayout,
 } from 'chrome-mcp-shared';
-import type { FrameRecord, FrameSlot, SnapshotLineDiff } from 'chrome-mcp-shared';
+import type {
+  CdpDomNode,
+  FrameRecord,
+  FrameSlot,
+  LayoutViewportBox,
+  SnapshotLineDiff,
+  ViewportRect,
+} from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { ERROR_MESSAGES } from '@/common/constants';
+import { runWithDebugger, type CdpSend } from '@/utils/cdp-run';
 
 /**
  * chrome_snapshot — compact accessibility lines with stable refs.
@@ -22,6 +38,57 @@ import { ERROR_MESSAGES } from '@/common/constants';
 const DEFAULT_MAX_ITEMS = 400;
 const HARD_MAX_ITEMS = 2000;
 const MAX_SNAPSHOTS_PER_TAB = 30;
+const PIERCE_ATTACH_WAIT_MS = 150;
+
+interface LayoutMetricSet {
+  cssVisualViewport?: LayoutViewportBox;
+  cssLayoutViewport?: LayoutViewportBox;
+  layoutViewport?: LayoutViewportBox;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pickLayout(metrics: LayoutMetricSet | undefined): LayoutViewportBox | undefined {
+  return metrics?.cssVisualViewport || metrics?.cssLayoutViewport || metrics?.layoutViewport;
+}
+
+async function sessionViewport(send: CdpSend, sessionId?: string): Promise<ViewportRect | null> {
+  try {
+    const metrics = await send<LayoutMetricSet>('Page.getLayoutMetrics', {}, sessionId);
+    return viewportRectFromLayout(pickLayout(metrics));
+  } catch {
+    return null;
+  }
+}
+
+async function frameIntersectsViewport(
+  send: CdpSend,
+  sessionId: string,
+  parentRect: ViewportRect,
+): Promise<boolean> {
+  try {
+    const tree = await send<{ frameTree?: { frame?: { id?: string } } }>(
+      'Page.getFrameTree',
+      {},
+      sessionId,
+    );
+    const frameId = tree?.frameTree?.frame?.id;
+    if (!frameId) return true;
+    const owner = await send<{ backendNodeId?: number }>('DOM.getFrameOwner', { frameId });
+    if (typeof owner?.backendNodeId !== 'number') return true;
+    const box = await send<{ model?: { border?: number[]; content?: number[] } }>(
+      'DOM.getBoxModel',
+      { backendNodeId: owner.backendNodeId },
+    );
+    const quad = box?.model?.border || box?.model?.content;
+    if (!quad) return true;
+    return quadIntersectsRect(quad, parentRect);
+  } catch {
+    return true;
+  }
+}
 
 export interface CapturedSnapshot {
   lines: string[];
@@ -46,6 +113,8 @@ interface SnapshotParams {
   windowId?: number;
   /** When set, snapshot only this frame (used for cross-origin frameId targeting). */
   frameId?: number;
+  /** CDP DOM.getDocument pierce. Omit to keep the accessibility snapshot. */
+  pierce?: boolean;
 }
 
 export interface SnapshotQuery {
@@ -146,6 +215,10 @@ class SnapshotTool extends BaseBrowserToolExecutor {
       return createErrorResponse(`${ERROR_MESSAGES.INVALID_PARAMETERS}: ${query.error}`);
     }
 
+    if (args?.pierce !== undefined && typeof args.pierce !== 'boolean') {
+      return createErrorResponse(`${ERROR_MESSAGES.INVALID_PARAMETERS}: pierce must be a boolean`);
+    }
+
     const since = typeof args?.since === 'string' ? args.since.trim() : '';
     if (args?.since !== undefined && !since) {
       return createErrorResponse(
@@ -175,8 +248,50 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         }
       }
 
-      const captured = await this.capture(tab.id, query);
+      let captured: CapturedSnapshot;
+      let pierceUsed = false;
+      let pierceFallback: string | undefined;
+      if (args?.pierce === true) {
+        if (query.refId && !parseCdpRef(query.refId)) {
+          return createErrorResponse(
+            `${ERROR_MESSAGES.INVALID_PARAMETERS}: pierce refId must be a cdp_N ref from a pierce snapshot`,
+          );
+        }
+        try {
+          captured = await this.capturePierce(tab.id, query);
+          pierceUsed = true;
+        } catch (error) {
+          const message = errMsg(error);
+          if (pierceFailureAction(message) === 'devtools' || message.includes('was not found')) {
+            return createErrorResponse(message);
+          }
+          try {
+            const fallbackQuery =
+              query.refId && parseCdpRef(query.refId) ? { ...query, refId: undefined } : query;
+            captured = await this.capture(tab.id, fallbackQuery);
+            pierceFallback =
+              fallbackQuery === query
+                ? message
+                : `${message} (the cdp ref was not applied on the accessibility fallback)`;
+          } catch (fallbackError) {
+            return createErrorResponse(
+              `Error generating snapshot: ${errMsg(fallbackError)} (pierce: ${message})`,
+            );
+          }
+        }
+      } else if (query.refId && parseCdpRef(query.refId)) {
+        return createErrorResponse(
+          `${ERROR_MESSAGES.INVALID_PARAMETERS}: cdp_ refs need pierce:true`,
+        );
+      } else {
+        captured = await this.capture(tab.id, query);
+      }
       const snapshotId = rememberSnapshot(tab.id, captured);
+      const pierceFields = pierceUsed
+        ? { pierce: true as const }
+        : pierceFallback
+          ? { pierceFallback }
+          : {};
 
       if (baseline) {
         const diff: SnapshotLineDiff = diffSnapshotLines(baseline.lines, captured.lines);
@@ -192,6 +307,7 @@ class SnapshotTool extends BaseBrowserToolExecutor {
           added: diff.added,
           removed: diff.removed,
           changed: diff.changed,
+          ...pierceFields,
         });
       }
 
@@ -205,7 +321,10 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         count: captured.lines.length,
         truncated: captured.truncated,
         lines: captured.lines,
-        tips: 'Next: act by ref (chrome_click_element, chrome_fill_or_select, or chrome_computer). Pass observe:true to get a diff, or call chrome_snapshot again with since set to this snapshotId. Screenshot only if layout matters.',
+        ...pierceFields,
+        tips: pierceUsed
+          ? 'Pierce refs look like cdp_N and are the CDP backendNodeId. chrome_file_chooser accepts them. chrome_click_element and chrome_fill_or_select still use ref_ refs from a snapshot without pierce. Pass since to diff, or observe:true on an action. Screenshot only if layout matters.'
+          : 'Next: act by ref (chrome_click_element, chrome_fill_or_select, or chrome_computer). Pass observe:true to get a diff, or call chrome_snapshot again with since set to this snapshotId. Screenshot only if layout matters.',
       });
     } catch (error) {
       return createErrorResponse(`Error generating snapshot: ${errMsg(error)}`);
@@ -314,6 +433,193 @@ class SnapshotTool extends BaseBrowserToolExecutor {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * CDP snapshot of closed shadow roots and out-of-process frames.
+   * Refs are `cdp_<backendNodeId>`. DevTools attached throws. Other CDP
+   * failures throw so the caller can fall back to capture().
+   */
+  private async capturePierce(tabId: number, query: SnapshotQuery): Promise<CapturedSnapshot> {
+    const rootBackendNodeId = query.refId ? parseCdpRef(query.refId)?.backendNodeId : undefined;
+    return runWithDebugger(tabId, 'snapshot-pierce', async ({ send }) => {
+      const childSessions: string[] = [];
+      const listener = (
+        source: chrome.debugger.DebuggerSession,
+        method: string,
+        params?: object,
+      ) => {
+        if (source.tabId !== tabId || method !== 'Target.attachedToTarget') return;
+        const body = (params || {}) as {
+          sessionId?: string;
+          targetInfo?: { type?: string };
+          waitingForDebugger?: boolean;
+        };
+        if (!body.sessionId) return;
+        if (body.targetInfo?.type && body.targetInfo.type !== 'iframe') return;
+        if (!childSessions.includes(body.sessionId)) childSessions.push(body.sessionId);
+        if (body.waitingForDebugger) {
+          void send('Runtime.runIfWaitingForDebugger', {}, body.sessionId).catch(() => undefined);
+        }
+      };
+      chrome.debugger.onEvent.addListener(listener);
+      try {
+        await send('Target.setAutoAttach', {
+          autoAttach: true,
+          waitForDebuggerOnStart: false,
+          flatten: true,
+        });
+        await delay(PIERCE_ATTACH_WAIT_MS);
+        await send('DOM.enable');
+        const documentNode = await send<{ root?: CdpDomNode }>('DOM.getDocument', {
+          depth: -1,
+          pierce: true,
+        });
+        if (!documentNode?.root) throw new Error('DOM.getDocument returned no root');
+
+        const docs: { sessionId?: string; root: CdpDomNode }[] = [{ root: documentNode.root }];
+        const notes: string[] = [];
+        const loadChild = async (sessionId: string) => {
+          try {
+            await send('DOM.enable', {}, sessionId);
+            const child = await send<{ root?: CdpDomNode }>(
+              'DOM.getDocument',
+              { depth: -1, pierce: true },
+              sessionId,
+            );
+            if (child?.root) docs.push({ sessionId, root: child.root });
+            else notes.push('frame (pierce unavailable: empty document)');
+          } catch (error) {
+            notes.push(`frame (pierce unavailable: ${errMsg(error)})`);
+          }
+        };
+        const first = [...childSessions];
+        for (const sessionId of first) await loadChild(sessionId);
+        await delay(50);
+        for (const sessionId of childSessions) {
+          if (!first.includes(sessionId)) await loadChild(sessionId);
+        }
+
+        let selected = docs;
+        if (rootBackendNodeId !== undefined) {
+          const owner = docs.find((doc) => pierceTreeHasBackendId(doc.root, rootBackendNodeId));
+          if (!owner) {
+            throw new Error(`cdp ref ${query.refId} was not found. Take a fresh pierce snapshot.`);
+          }
+          selected = [owner];
+        }
+
+        const visibleByRoot = new Map<CdpDomNode, Set<number>>();
+        let boxCapped = false;
+        if (query.scope === 'viewport') {
+          const metrics = await send<LayoutMetricSet>('Page.getLayoutMetrics');
+          const rect = viewportRectFromLayout(pickLayout(metrics));
+          if (!rect) throw new Error('Page.getLayoutMetrics did not return a viewport');
+          const budget = pierceBoxBudget(query.maxItems);
+          let used = 0;
+          for (const doc of selected) {
+            if (used >= budget) {
+              boxCapped = true;
+              break;
+            }
+            if (doc.sessionId && !(await frameIntersectsViewport(send, doc.sessionId, rect))) {
+              visibleByRoot.set(doc.root, new Set());
+              continue;
+            }
+            const listed = listPierceBackendIds(doc.root, {
+              filter: query.filter,
+              rootBackendNodeId,
+              limit: budget - used,
+            });
+            if (listed.capped) boxCapped = true;
+            used += listed.ids.length;
+            const childRect = doc.sessionId ? await sessionViewport(send, doc.sessionId) : rect;
+            const visibleIds = new Set<number>();
+            if (!childRect) {
+              for (const id of listed.ids) visibleIds.add(id);
+            } else {
+              for (const id of listed.ids) {
+                try {
+                  const box = await send<{ model?: { border?: number[]; content?: number[] } }>(
+                    'DOM.getBoxModel',
+                    { backendNodeId: id },
+                    doc.sessionId,
+                  );
+                  const quad = box?.model?.border || box?.model?.content;
+                  if (quadIntersectsRect(quad, childRect)) visibleIds.add(id);
+                } catch {
+                  // No box means the node is not in the viewport.
+                }
+              }
+            }
+            visibleByRoot.set(doc.root, visibleIds);
+          }
+        }
+
+        const lines: string[] = [];
+        let truncated = boxCapped;
+        let omitted = 0;
+        let remaining = query.maxItems;
+        for (const doc of selected) {
+          const formatted = formatPierceSnapshot(doc.root, {
+            filter: query.filter,
+            maxItems: remaining,
+            inViewport:
+              query.scope === 'viewport' ? visibleByRoot.get(doc.root) || new Set() : undefined,
+            rootBackendNodeId,
+          });
+          if (formatted.missingRoot) {
+            throw new Error(`cdp ref ${query.refId} was not found. Take a fresh pierce snapshot.`);
+          }
+          lines.push(...formatted.lines);
+          remaining -= formatted.lines.length;
+          truncated = truncated || formatted.truncated;
+          omitted += formatted.omitted;
+          if (remaining <= 0) break;
+        }
+        for (const note of notes) {
+          if (remaining <= 0) {
+            truncated = true;
+            omitted += 1;
+            continue;
+          }
+          lines.push(note);
+          remaining -= 1;
+        }
+
+        let url = '';
+        let title = '';
+        try {
+          const tree = await send<{ frameTree?: { frame?: { url?: string } } }>(
+            'Page.getFrameTree',
+          );
+          url = tree?.frameTree?.frame?.url || '';
+        } catch {
+          url = '';
+        }
+        try {
+          const evaluated = await send<{ result?: { value?: unknown } }>('Runtime.evaluate', {
+            expression: 'document.title',
+            returnByValue: true,
+          });
+          title = typeof evaluated?.result?.value === 'string' ? evaluated.result.value : '';
+        } catch {
+          title = '';
+        }
+        return { lines, url, title, truncated, omitted };
+      } finally {
+        try {
+          await send('Target.setAutoAttach', {
+            autoAttach: false,
+            waitForDebuggerOnStart: false,
+            flatten: true,
+          });
+        } catch {
+          // The shared helper detaches next.
+        }
+        chrome.debugger.onEvent.removeListener(listener);
+      }
+    });
   }
 
   /** Run the in-page snapshot in one frame. Host access is required for cross-origin frames. */

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import fetch from 'node-fetch';
+import { base64ByteLength, pdfTooLarge, resolveDownloadPath } from 'chrome-mcp-shared';
 
 /**
  * File handler for managing file uploads through the native messaging host
@@ -43,6 +44,9 @@ export class FileHandler {
 
         case 'cleanupFile':
           return await this.cleanupFile(filePath);
+
+        case 'saveDownload':
+          return this.saveDownload(request?.saveName, request?.base64Data, request?.downloadsDir);
 
         case 'analyzeTrace': {
           const targetPath = traceFilePath || filePath;
@@ -221,6 +225,46 @@ export class FileHandler {
         error: `Failed to cleanup file: ${error}`,
       };
     }
+  }
+
+  /**
+   * Write a PDF (or other download) under the user's downloads directory.
+   * saveName is relative. Absolute paths and `..` are rejected.
+   */
+  private saveDownload(
+    saveName: unknown,
+    base64Data: unknown,
+    downloadsDir?: unknown,
+  ): {
+    success: boolean;
+    filePath?: string;
+    size?: number;
+    error?: string;
+  } {
+    if (typeof saveName !== 'string' || typeof base64Data !== 'string') {
+      return { success: false, error: 'saveDownload needs saveName and base64Data' };
+    }
+    const dir =
+      typeof downloadsDir === 'string' && downloadsDir
+        ? downloadsDir
+        : path.join(os.homedir(), 'Downloads');
+    const resolved = resolveDownloadPath(dir, saveName);
+    if ('error' in resolved) return { success: false, error: resolved.error };
+    const declared = base64ByteLength(base64Data);
+    if (typeof declared !== 'number') return { success: false, error: declared.error };
+    const tooLarge = pdfTooLarge(declared);
+    if (tooLarge) return { success: false, error: tooLarge };
+
+    const buffer = Buffer.from(base64Data, 'base64');
+    const root = path.resolve(dir);
+    const finalPath = path.resolve(resolved.filePath);
+    const relative = path.relative(root, finalPath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      return { success: false, error: 'savePath escapes the downloads directory' };
+    }
+    fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+    fs.writeFileSync(finalPath, buffer);
+    return { success: true, filePath: finalPath, size: buffer.length };
   }
 
   /**

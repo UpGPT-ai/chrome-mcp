@@ -49,3 +49,5 @@ export { gifRecorderTool } from './gif-recorder';
 export { cookiesTool } from './cookies';
 export { storageTool } from './storage';
 export { interceptTool } from './intercept';
+export { fileChooserTool } from './file-chooser';
+export { printPdfTool } from './print-pdf';
