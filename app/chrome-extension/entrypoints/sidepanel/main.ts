@@ -2,7 +2,8 @@ import { createApp } from 'vue';
 import { NativeMessageType } from 'chrome-mcp-shared';
 import App from './App.vue';
 
-// Tailwind first, then custom tokens
+// Shared design tokens, then Tailwind, then custom tokens
+import '../styles/tokens.css';
 import '../styles/tailwind.css';
 // AgentChat theme tokens
 import './styles/agent-chat.css';

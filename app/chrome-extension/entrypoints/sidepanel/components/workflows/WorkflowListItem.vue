@@ -352,7 +352,7 @@ const menuItemDangerStyle = computed(() => ({
 }
 
 .workflow-menu-item-danger:hover {
-  background-color: rgba(239, 68, 68, 0.1);
+  background-color: var(--ac-danger-subtle, color-mix(in srgb, var(--cm-danger) 10%, transparent));
 }
 
 /* Menu fade transition */

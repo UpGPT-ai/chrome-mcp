@@ -5,7 +5,7 @@
  * All components must only use these tokens - never hardcode colors.
  *
  * Themes:
- * - warm-editorial (default): Warm, editorial style from agent-ux.html
+ * - warm-editorial (default): maps to the shared tokens in ../../styles/tokens.css
  * - blueprint-architect: Blueprint grid with technical aesthetic
  * - zen-journal: Calm journal / graphite accent (Muji style)
  * - neo-pop: Thick borders + hard shadow (Brutalist)
@@ -29,9 +29,9 @@
       'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial;
 
     /* Semantic font tokens */
-    --ac-font-body: var(--ac-font-sans);
-    --ac-font-heading: var(--ac-font-serif);
-    --ac-font-code: var(--ac-font-mono);
+    --ac-font-body: var(--cm-font);
+    --ac-font-heading: var(--cm-font);
+    --ac-font-code: var(--cm-mono);
 
     /* ========================================
        Geometry (Shape & Spacing)
@@ -39,9 +39,9 @@
     --ac-border-width: 1px;
     --ac-border-width-strong: 2px;
     --ac-radius-container: 0px;
-    --ac-radius-card: 12px;
-    --ac-radius-inner: 8px;
-    --ac-radius-button: 8px;
+    --ac-radius-card: var(--cm-radius);
+    --ac-radius-inner: var(--cm-radius-sm);
+    --ac-radius-button: var(--cm-radius-sm);
 
     /* Motion */
     --ac-motion-fast: 120ms;
@@ -60,39 +60,39 @@
        ======================================== */
 
     /* Background */
-    --ac-bg: #fdfcf8;
+    --ac-bg: var(--cm-bg);
     --ac-bg-pattern: none;
     --ac-bg-pattern-size: 16px 16px;
 
     /* Header */
-    --ac-header-bg: rgba(253, 252, 248, 0.95);
-    --ac-header-border: rgba(245, 245, 244, 0.5);
+    --ac-header-bg: color-mix(in srgb, var(--cm-bg) 95%, transparent);
+    --ac-header-border: var(--cm-border);
 
     /* Surfaces */
-    --ac-surface: #ffffff;
-    --ac-surface-muted: #f2f0eb;
-    --ac-surface-inset: #f2f0eb;
+    --ac-surface: var(--cm-bg);
+    --ac-surface-muted: var(--cm-surface);
+    --ac-surface-inset: var(--cm-surface);
 
     /* Text */
-    --ac-text: #1a1a1a;
-    --ac-text-muted: #6e6e6e;
-    --ac-text-subtle: #a8a29e;
-    --ac-text-inverse: #ffffff;
-    --ac-text-placeholder: #a8a29e;
+    --ac-text: var(--cm-text);
+    --ac-text-muted: var(--cm-text-muted);
+    --ac-text-subtle: var(--cm-text-muted);
+    --ac-text-inverse: var(--cm-bg);
+    --ac-text-placeholder: var(--cm-text-muted);
 
     /* Borders */
-    --ac-border: #e7e5e4;
-    --ac-border-strong: #d6d3d1;
+    --ac-border: var(--cm-border);
+    --ac-border-strong: color-mix(in srgb, var(--cm-border) 60%, var(--cm-text-muted));
 
     /* Hover states */
-    --ac-hover-bg: #f5f5f4;
-    --ac-hover-bg-subtle: #fafaf9;
+    --ac-hover-bg: var(--cm-surface);
+    --ac-hover-bg-subtle: color-mix(in srgb, var(--cm-surface) 50%, var(--cm-bg));
 
     /* Accent (terracotta) */
-    --ac-accent: #d97757;
-    --ac-accent-hover: #c4664a;
-    --ac-accent-subtle: rgba(217, 119, 87, 0.12);
-    --ac-accent-contrast: #ffffff;
+    --ac-accent: var(--cm-accent);
+    --ac-accent-hover: color-mix(in srgb, var(--cm-accent) 85%, var(--cm-text));
+    --ac-accent-subtle: color-mix(in srgb, var(--cm-accent) 12%, transparent);
+    --ac-accent-contrast: var(--cm-accent-contrast);
     --ac-accent-2: var(--ac-accent);
 
     /* Links */
@@ -100,75 +100,77 @@
     --ac-link-hover: var(--ac-accent-hover);
 
     /* Selection */
-    --ac-selection-bg: #ffedd5;
-    --ac-selection-text: #7c2d12;
+    --ac-selection-bg: color-mix(in srgb, var(--cm-accent) 20%, transparent);
+    --ac-selection-text: var(--cm-text);
 
     /* Shadows */
     --ac-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
     --ac-shadow-float: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
 
     /* Focus */
-    --ac-focus-ring: rgba(214, 211, 209, 0.9);
+    --ac-focus-ring: color-mix(in srgb, var(--cm-accent) 45%, transparent);
 
     /* Timeline */
-    --ac-timeline-line: #e7e5e4;
-    --ac-timeline-node: #d6d3d1;
-    --ac-timeline-node-hover: #a8a29e;
+    --ac-timeline-line: var(--cm-border);
+    --ac-timeline-node: color-mix(in srgb, var(--cm-border) 60%, var(--cm-text-muted));
+    --ac-timeline-node-hover: var(--cm-text-muted);
     --ac-timeline-node-active: var(--ac-accent);
     --ac-timeline-node-active-border: var(--ac-accent);
-    --ac-timeline-node-tool: #94a3b8;
+    --ac-timeline-node-tool: var(--cm-text-muted);
     --ac-timeline-node-pulse-shadow:
-      0 0 0 2px rgba(217, 119, 87, 0.25), 0 0 12px rgba(217, 119, 87, 0.2);
+      0 0 0 2px color-mix(in srgb, var(--cm-accent) 25%, transparent),
+      0 0 12px color-mix(in srgb, var(--cm-accent) 20%, transparent);
 
     /* Chips/Pills */
-    --ac-chip-bg: #f2f0eb;
-    --ac-chip-text: #1a1a1a;
-    --ac-chip-border: #e7e5e4;
+    --ac-chip-bg: var(--cm-surface);
+    --ac-chip-text: var(--cm-text);
+    --ac-chip-border: var(--cm-border);
 
     /* Code blocks */
-    --ac-code-bg: #ffffff;
-    --ac-code-text: #1a1a1a;
-    --ac-code-border: #e7e5e4;
+    --ac-code-bg: var(--cm-surface);
+    --ac-code-text: var(--cm-text);
+    --ac-code-border: var(--cm-border);
 
     /* Diff colors */
-    --ac-diff-add-bg: rgba(240, 253, 244, 0.6);
-    --ac-diff-add-text: #15803d;
-    --ac-diff-add-border: #4ade80;
-    --ac-diff-del-bg: rgba(254, 242, 242, 0.6);
-    --ac-diff-del-text: #b91c1c;
-    --ac-diff-del-border: #fca5a5;
+    --ac-diff-add-bg: color-mix(in srgb, var(--cm-ok) 10%, transparent);
+    --ac-diff-add-text: var(--cm-ok);
+    --ac-diff-add-border: color-mix(in srgb, var(--cm-ok) 55%, transparent);
+    --ac-diff-del-bg: color-mix(in srgb, var(--cm-danger) 10%, transparent);
+    --ac-diff-del-text: var(--cm-danger);
+    --ac-diff-del-border: color-mix(in srgb, var(--cm-danger) 55%, transparent);
 
     /* Status colors */
-    --ac-success: #22c55e;
-    --ac-warning: #f59e0b;
-    --ac-danger: #ef4444;
+    --ac-success: var(--cm-ok);
+    --ac-warning: var(--cm-warn);
+    --ac-danger: var(--cm-danger);
+    --ac-danger-subtle: color-mix(in srgb, var(--cm-danger) 10%, transparent);
 
     /* Scrollbar */
-    --ac-scrollbar-thumb: #e5e5e5;
-    --ac-scrollbar-thumb-hover: #d4d4d4;
+    --ac-scrollbar-thumb: var(--cm-border);
+    --ac-scrollbar-thumb-hover: var(--cm-text-muted);
   }
 
   /* ========================================
      WARM EDITORIAL (Explicit for clarity)
      ======================================== */
   .agent-theme[data-agent-theme='warm-editorial'] {
-    --ac-font-body: var(--ac-font-sans);
-    --ac-font-heading: var(--ac-font-serif);
-    --ac-font-code: var(--ac-font-mono);
+    --ac-font-body: var(--cm-font);
+    --ac-font-heading: var(--cm-font);
+    --ac-font-code: var(--cm-mono);
 
-    --ac-bg: #fdfcf8;
+    --ac-bg: var(--cm-bg);
     --ac-bg-pattern: none;
-    --ac-header-bg: rgba(253, 252, 248, 0.95);
-    --ac-header-border: rgba(245, 245, 244, 0.5);
-    --ac-surface: #ffffff;
-    --ac-surface-muted: #f2f0eb;
-    --ac-text: #1a1a1a;
-    --ac-text-muted: #6e6e6e;
-    --ac-text-subtle: #a8a29e;
-    --ac-border: #e7e5e4;
-    --ac-accent: #d97757;
+    --ac-header-bg: color-mix(in srgb, var(--cm-bg) 95%, transparent);
+    --ac-header-border: var(--cm-border);
+    --ac-surface: var(--cm-bg);
+    --ac-surface-muted: var(--cm-surface);
+    --ac-text: var(--cm-text);
+    --ac-text-muted: var(--cm-text-muted);
+    --ac-text-subtle: var(--cm-text-muted);
+    --ac-border: var(--cm-border);
+    --ac-accent: var(--cm-accent);
     --ac-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
-    --ac-radius-card: 12px;
+    --ac-radius-card: var(--cm-radius);
     --ac-border-width: 1px;
   }
 

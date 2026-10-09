@@ -1,5 +1,43 @@
 @import 'tailwindcss';
 
+/* Route the Tailwind palette through the shared design tokens (tokens.css) so utility
+   classes follow the same colours, including dark mode. */
+@theme {
+  --color-white: var(--cm-bg);
+  --color-slate-50: var(--cm-surface);
+  --color-slate-100: color-mix(in srgb, var(--cm-surface) 70%, var(--cm-border));
+  --color-slate-200: var(--cm-border);
+  --color-slate-300: color-mix(in srgb, var(--cm-border) 60%, var(--cm-text-muted));
+  --color-slate-400: color-mix(in srgb, var(--cm-text-muted) 75%, var(--cm-bg));
+  --color-slate-500: var(--cm-text-muted);
+  --color-slate-600: color-mix(in srgb, var(--cm-text-muted) 60%, var(--cm-text));
+  --color-slate-700: color-mix(in srgb, var(--cm-text-muted) 30%, var(--cm-text));
+  --color-slate-800: var(--cm-text);
+  --color-slate-900: var(--cm-text);
+  --color-red-50: color-mix(in srgb, var(--cm-danger) 8%, var(--cm-bg));
+  --color-red-400: var(--cm-danger);
+  --color-red-500: var(--cm-danger);
+  --color-red-600: var(--cm-danger);
+  --color-red-700: color-mix(in srgb, var(--cm-danger) 80%, var(--cm-text));
+  --color-green-400: var(--cm-ok);
+  --color-green-500: var(--cm-ok);
+  --color-green-600: var(--cm-ok);
+  --color-emerald-50: color-mix(in srgb, var(--cm-ok) 8%, var(--cm-bg));
+  --color-emerald-200: color-mix(in srgb, var(--cm-ok) 30%, var(--cm-bg));
+  --color-emerald-500: var(--cm-ok);
+  --color-emerald-600: var(--cm-ok);
+  --color-emerald-700: color-mix(in srgb, var(--cm-ok) 80%, var(--cm-text));
+  --color-blue-50: color-mix(in srgb, var(--cm-accent) 8%, var(--cm-bg));
+  --color-blue-500: var(--cm-accent);
+  --color-blue-600: var(--cm-accent);
+  --color-blue-700: color-mix(in srgb, var(--cm-accent) 80%, var(--cm-text));
+  --color-amber-50: color-mix(in srgb, var(--cm-warn) 8%, var(--cm-bg));
+  --color-amber-500: var(--cm-warn);
+  --color-amber-600: var(--cm-warn);
+  --color-amber-700: color-mix(in srgb, var(--cm-warn) 80%, var(--cm-text));
+  --color-yellow-500: var(--cm-warn);
+}
+
 /* App background and card helpers */
 @layer base {
   html,
@@ -8,45 +46,30 @@
     height: 100%;
   }
   body {
-    @apply bg-slate-50 text-slate-800;
+    background: var(--cm-surface);
+    color: var(--cm-text);
+    font-family: var(--cm-font);
   }
 
-  /* Record&Replay builder design tokens */
+  /* Record&Replay builder design tokens: aliases of the shared --cm-* tokens.
+     Light/dark follows [data-theme] on the container, else the OS setting. */
   .rr-theme {
-    --rr-bg: #f8fafc;
-    --rr-topbar: rgba(255, 255, 255, 0.9);
-    --rr-card: #ffffff;
-    --rr-elevated: #ffffff;
-    --rr-border: #e5e7eb;
-    --rr-subtle: #f3f4f6;
-    --rr-text: #0f172a;
-    --rr-text-weak: #475569;
-    --rr-muted: #64748b;
-    --rr-brand: #7c3aed;
-    --rr-brand-strong: #5b21b6;
-    --rr-accent: #0ea5e9;
-    --rr-success: #10b981;
-    --rr-warn: #f59e0b;
-    --rr-danger: #ef4444;
-    --rr-dot: rgba(2, 6, 23, 0.08);
-  }
-  .rr-theme[data-theme='dark'] {
-    --rr-bg: #0b1020;
-    --rr-topbar: rgba(12, 15, 24, 0.8);
-    --rr-card: #0f1528;
-    --rr-elevated: #121a33;
-    --rr-border: rgba(255, 255, 255, 0.08);
-    --rr-subtle: rgba(255, 255, 255, 0.04);
-    --rr-text: #e5e7eb;
-    --rr-text-weak: #cbd5e1;
-    --rr-muted: #94a3b8;
-    --rr-brand: #a78bfa;
-    --rr-brand-strong: #7c3aed;
-    --rr-accent: #38bdf8;
-    --rr-success: #34d399;
-    --rr-warn: #fbbf24;
-    --rr-danger: #f87171;
-    --rr-dot: rgba(226, 232, 240, 0.08);
+    --rr-bg: var(--cm-surface);
+    --rr-topbar: color-mix(in srgb, var(--cm-bg) 90%, transparent);
+    --rr-card: var(--cm-bg);
+    --rr-elevated: var(--cm-bg);
+    --rr-border: var(--cm-border);
+    --rr-subtle: var(--cm-surface);
+    --rr-text: var(--cm-text);
+    --rr-text-weak: var(--cm-text-muted);
+    --rr-muted: var(--cm-text-muted);
+    --rr-brand: var(--cm-accent);
+    --rr-brand-strong: var(--cm-accent);
+    --rr-accent: var(--cm-accent);
+    --rr-success: var(--cm-ok);
+    --rr-warn: var(--cm-warn);
+    --rr-danger: var(--cm-danger);
+    --rr-dot: color-mix(in srgb, var(--cm-text) 8%, transparent);
   }
 }
 
@@ -71,7 +94,7 @@
     @apply opacity-60 cursor-not-allowed;
   }
   .btn.primary {
-    color: #fff;
+    color: var(--cm-accent-contrast);
     background: var(--rr-brand-strong);
     border-color: var(--rr-brand-strong);
   }

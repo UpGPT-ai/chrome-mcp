@@ -723,7 +723,7 @@ const triggerActionDangerStyle = computed(() => ({
 }
 
 .trigger-action-danger:hover {
-  background-color: rgba(239, 68, 68, 0.1);
+  background-color: var(--ac-danger-subtle, color-mix(in srgb, var(--cm-danger) 10%, transparent));
 }
 
 /* Section expand transition */
