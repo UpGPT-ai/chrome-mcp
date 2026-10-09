@@ -14,3 +14,4 @@ export * from './observe-diff';
 export * from './wait-conditions';
 export * from './fill-form';
 export * from './pointer-path';
+export * from './page-access';

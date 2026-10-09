@@ -1,4 +1,5 @@
 import { type Tool } from '@modelcontextprotocol/sdk/types.js';
+import { AGENT_PREFERRED_ORDER, UNTRUSTED_INSTRUCTION } from './page-access';
 
 export const TOOL_NAMES = {
   BROWSER: {
@@ -55,6 +56,9 @@ export const TOOL_NAMES = {
     PERFORMANCE_STOP_TRACE: 'performance_stop_trace',
     PERFORMANCE_ANALYZE_INSIGHT: 'performance_analyze_insight',
     GIF_RECORDER: 'chrome_gif_recorder',
+    COOKIES: 'chrome_cookies',
+    STORAGE: 'chrome_storage',
+    INTERCEPT: 'chrome_intercept',
   },
   RECORD_REPLAY: {
     FLOW_RUN: 'record_replay_flow_run',
@@ -1904,6 +1908,153 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number' },
       },
       required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.COOKIES,
+    description: [
+      'Read or change browser cookies by url or domain. Actions: get, set, delete, list. get needs a name plus a url or domain. set and delete need a name and an http(s) url. list needs a url or a domain. list returns metadata only (valueRedacted and valueLength, never the value). get returns the value inside the untrusted envelope.',
+      UNTRUSTED_INSTRUCTION,
+      'Off by default. Enable highRiskTools.cookies in extension storage and retry.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['get', 'set', 'delete', 'list'],
+          description: 'get, set, delete, or list.',
+        },
+        url: {
+          type: 'string',
+          description: 'http(s) URL the cookie belongs to. Required for set and delete.',
+        },
+        domain: {
+          type: 'string',
+          description: 'Host name for list or get. Not a full URL.',
+        },
+        name: { type: 'string', description: 'Cookie name. Required except for list.' },
+        value: { type: 'string', description: 'Cookie value for set. Not echoed back.' },
+        path: { type: 'string', description: 'Cookie path, starting with /.' },
+        secure: { type: 'boolean' },
+        httpOnly: { type: 'boolean' },
+        sameSite: {
+          type: 'string',
+          enum: ['unspecified', 'no_restriction', 'lax', 'strict'],
+          description: 'SameSite attribute. none is accepted as no_restriction.',
+        },
+        expirationDate: {
+          type: 'number',
+          description: 'Seconds since the UNIX epoch. Omit for a session cookie.',
+        },
+        storeId: {
+          type: 'string',
+          description: 'Cookie store id. Omit for the default store. Use it for incognito.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.STORAGE,
+    description: [
+      "Read or change the tab origin's localStorage or sessionStorage, or list IndexedDB database and object-store names. area is local, session, or indexeddb. Actions: get, set, remove, clear, list. IndexedDB supports list only. list returns keys or names, never values. get returns the raw string inside the untrusted envelope. set stores a string as given and JSON-encodes other JSON values. Runs in the page main world on the top frame.",
+      UNTRUSTED_INSTRUCTION,
+      'Value actions (get, set, remove, clear) are off by default. Enable highRiskTools.storageValues. Listing keys and IndexedDB names stays available.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['get', 'set', 'remove', 'clear', 'list'],
+          description: 'get, set, remove, clear, or list.',
+        },
+        area: {
+          type: 'string',
+          enum: ['local', 'session', 'indexeddb'],
+          description: 'localStorage, sessionStorage, or IndexedDB names.',
+        },
+        key: { type: 'string', description: 'Storage key for get, set, and remove.' },
+        value: {
+          description:
+            'Value to store. Strings are stored as given. Other JSON values are JSON-encoded. Not echoed back.',
+        },
+        tabId: { type: 'number', description: 'Target tab (default: active tab).' },
+        windowId: {
+          type: 'number',
+          description: 'Window whose active tab is used when tabId is omitted.',
+        },
+      },
+      required: ['action', 'area'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.INTERCEPT,
+    description: [
+      'Pause matching network requests on a tab with the CDP Fetch domain. Actions: add_rule, list_rules, remove_rule, clear. A rule is {urlPattern, method?, action: block|mock|modify_headers, status?, headers?, body?, contentType?}. urlPattern uses CDP wildcards: * is any length, ? is one character, backslash escapes. The first matching rule wins. method is filtered here because CDP patterns have no method. Unmatched paused requests are continued. Rules stay in memory for that tab and are dropped when the tab closes or the debugger detaches. list_rules returns each rule with hitCount and the last 20 hits (url, method, time). Shares one debugger attachment with chrome_network_capture.',
+      UNTRUSTED_INSTRUCTION,
+      'Off by default. Enable highRiskTools.intercept and retry.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['add_rule', 'list_rules', 'remove_rule', 'clear'],
+          description: 'add_rule, list_rules, remove_rule, or clear.',
+        },
+        tabId: { type: 'number', description: 'Target tab (default: active tab).' },
+        windowId: {
+          type: 'number',
+          description: 'Window whose active tab is used when tabId is omitted.',
+        },
+        ruleId: { type: 'string', description: 'Rule id to remove.' },
+        rule: {
+          type: 'object',
+          description: 'Rule to add. urlPattern is a CDP wildcard, not a Chrome match pattern.',
+          properties: {
+            urlPattern: {
+              type: 'string',
+              description: 'CDP urlPattern. * any length, ? one character.',
+            },
+            method: {
+              type: 'string',
+              description: 'HTTP method filter. Omit or * to match every method.',
+            },
+            action: {
+              type: 'string',
+              enum: ['block', 'mock', 'modify_headers'],
+              description:
+                'block fails the request. mock fulfills it. modify_headers merges request headers.',
+            },
+            status: { type: 'number', description: 'Mock response status. Default 200.' },
+            headers: {
+              type: 'array',
+              description:
+                'Headers as {name, value}. modify_headers merges them into the request. mock sends them on the response.',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  value: { type: 'string' },
+                },
+                required: ['name', 'value'],
+              },
+            },
+            body: { type: 'string', description: 'Mock response body.' },
+            contentType: {
+              type: 'string',
+              description: 'Mock Content-Type. Default text/plain; charset=utf-8.',
+            },
+          },
+          required: ['urlPattern', 'action'],
+        },
+      },
+      required: ['action'],
     },
   },
 ];

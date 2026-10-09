@@ -46,3 +46,6 @@ export {
   performanceAnalyzeInsightTool,
 } from './performance';
 export { gifRecorderTool } from './gif-recorder';
+export { cookiesTool } from './cookies';
+export { storageTool } from './storage';
+export { interceptTool } from './intercept';
