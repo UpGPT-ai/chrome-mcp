@@ -12,6 +12,7 @@ import {
   type ParsedStorageArgs,
 } from 'chrome-mcp-shared';
 import { readHighRiskFlags } from './high-risk';
+import { noteReturnedSecret } from './agent-guard';
 
 /**
  * chrome_storage — localStorage, sessionStorage, and IndexedDB names on the tab origin.
@@ -251,6 +252,7 @@ class StorageTool extends BaseBrowserToolExecutor {
     }
     if (parsed.action === 'get') {
       if (!result.found) return { area: parsed.area, origin, key: parsed.key, found: false };
+      noteReturnedSecret(result.value);
       return {
         area: parsed.area,
         origin,

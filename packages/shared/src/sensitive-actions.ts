@@ -1,9 +1,12 @@
 /**
  * Pure helpers for chrome_grant_permission, chrome_clipboard, and chrome_request_human.
  * The extension applies them. Live CDP and the overlay are verified manually.
- * Item 8 can replace the exact-origin site-policy match. This file does not
- * build the options page or the allow/deny choke point.
+ * Site-policy allow entries are exact http(s) origins or host wildcards
+ * such as https://*.example.com. The choke point for every tool lives in
+ * evaluateSitePolicy. This file does not build an options page.
  */
+
+import { matchNormalizedOrigin } from './injection-guard';
 
 export const SITE_POLICY_ALLOW_ORIGINS_KEY = 'sitePolicyAllowOrigins';
 
@@ -216,8 +219,8 @@ export function parseGrantPermissionArgs(args: unknown): ParsedGrantArgs | { err
 }
 
 /**
- * Fail closed. A missing or empty list refuses the grant. A present list must
- * contain the exact origin. Item 8 can replace this matcher later.
+ * Fail closed. A missing or empty list refuses the grant. A present list
+ * matches exact http(s) origins and host wildcards such as https://*.example.com.
  */
 export function matchSitePolicyOrigin(
   origin: string,
@@ -226,27 +229,7 @@ export function matchSitePolicyOrigin(
 ): { origin: string } | { error: string } {
   const normalized = httpOrigin(origin);
   if ('error' in normalized) return normalized;
-  const key = SITE_POLICY_ALLOW_ORIGINS_KEY;
-  if (stored === undefined || stored === null) {
-    return {
-      error: `Origin is not listed in site policy (storage key ${key}). ${toolName} refused.`,
-    };
-  }
-  if (!Array.isArray(stored)) {
-    return { error: `${key} is malformed. Expected an array of http(s) origins.` };
-  }
-  const listed = new Set<string>();
-  for (const entry of stored) {
-    const item = httpOrigin(entry);
-    if ('error' in item) return { error: `${key} is malformed. ${item.error}` };
-    listed.add(item.origin);
-  }
-  if (!listed.has(normalized.origin)) {
-    return {
-      error: `Origin ${normalized.origin} is not listed in site policy (storage key ${key}). ${toolName} refused.`,
-    };
-  }
-  return { origin: normalized.origin };
+  return matchNormalizedOrigin(normalized.origin, stored, toolName);
 }
 
 export function parseClipboardArgs(args: unknown): ParsedClipboardArgs | { error: string } {

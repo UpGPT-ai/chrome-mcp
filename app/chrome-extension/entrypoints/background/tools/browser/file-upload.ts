@@ -1,6 +1,7 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, highRiskDisabledError } from 'chrome-mcp-shared';
+import { readHighRiskFlags } from './high-risk';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
 
 interface FileUploadToolParams {
@@ -40,6 +41,9 @@ class FileUploadTool extends BaseBrowserToolExecutor {
     if (!filePath && !fileUrl && !base64Data) {
       return createErrorResponse('One of filePath, fileUrl, or base64Data must be provided');
     }
+
+    const flags = await readHighRiskFlags();
+    if (!flags.upload) return createErrorResponse(highRiskDisabledError('upload'));
 
     try {
       // Resolve tab

@@ -1,6 +1,7 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, highRiskDisabledError } from 'chrome-mcp-shared';
+import { readHighRiskFlags } from './high-risk';
 import { ExecutionWorld, STORAGE_KEYS } from '@/common/constants';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
 
@@ -335,7 +336,13 @@ function clearActiveInjection(tabId: number, id: string) {
   if (m) m.delete(id);
 }
 
+async function userscriptsAllowed(): Promise<boolean> {
+  const flags = await readHighRiskFlags();
+  return flags.userscript === true;
+}
+
 async function reinjectForTab(tabId: number, url?: string) {
+  if (!(await userscriptsAllowed())) return;
   // Emergency global switch
   const flag = (await chrome.storage.local.get([STORAGE_KEYS.USERSCRIPTS_DISABLED]))[
     STORAGE_KEYS.USERSCRIPTS_DISABLED
@@ -379,6 +386,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // webNavigation based runAt mapping
 chrome.webNavigation.onCommitted.addListener(async (details) => {
   if (details.frameId !== 0) return;
+  if (!(await userscriptsAllowed())) return;
   const tab = await chrome.tabs.get(details.tabId).catch(() => null);
   if (!tab) return;
   const disabled = (await chrome.storage.local.get([STORAGE_KEYS.USERSCRIPTS_DISABLED]))[
@@ -400,6 +408,7 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
 
 chrome.webNavigation.onDOMContentLoaded.addListener(async (details) => {
   if (details.frameId !== 0) return;
+  if (!(await userscriptsAllowed())) return;
   const tab = await chrome.tabs.get(details.tabId).catch(() => null);
   if (!tab) return;
   const disabled = (await chrome.storage.local.get([STORAGE_KEYS.USERSCRIPTS_DISABLED]))[
@@ -424,6 +433,9 @@ class UserscriptTool extends BaseBrowserToolExecutor {
 
   async execute(params: UserscriptArgsBase): Promise<ToolResult> {
     try {
+      if (!(await userscriptsAllowed())) {
+        return createErrorResponse(highRiskDisabledError('userscript'));
+      }
       const { action } = params;
       const args = params.args || {};
 

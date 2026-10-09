@@ -1,6 +1,7 @@
 import { type Tool } from '@modelcontextprotocol/sdk/types.js';
 import { AGENT_PREFERRED_ORDER, UNTRUSTED_INSTRUCTION } from './page-access';
 import { HANDOFF_BANNER_TEXT } from './sensitive-actions';
+import { CONFIRM_CROSS_ORIGIN_DESCRIPTION, INCLUDE_HIDDEN_DESCRIPTION } from './injection-guard';
 
 export const TOOL_NAMES = {
   BROWSER: {
@@ -66,6 +67,7 @@ export const TOOL_NAMES = {
     CLIPBOARD: 'chrome_clipboard',
     REQUEST_HUMAN: 'chrome_request_human',
     RELOAD_EXTENSION: 'chrome_reload_extension',
+    AUDIT_LOG: 'chrome_audit_log',
     RECORDING: 'chrome_recording',
     FLOW_LIST: 'chrome_flow_list',
     FLOW_RUN: 'chrome_flow_run',
@@ -191,7 +193,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.READ_PAGE,
     description:
-      'Get an accessibility tree representation of visible elements on the page. Only returns elements that are visible in the viewport. Optionally filter for only interactive elements.\nTip: If the returned elements do not include the specific element you need, use the computer tool\'s screenshot (action="screenshot") to capture the element\'s on-screen coordinates, then operate by coordinates.',
+      'Get an accessibility tree representation of elements on the page. Hidden text is dropped unless includeHidden is true. pageContent is wrapped in the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION +
+      '\nTip: If the returned elements do not include the specific element you need, use the computer tool\'s screenshot (action="screenshot") to capture the element\'s on-screen coordinates, then operate by coordinates.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -218,6 +222,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Target window ID to pick active tab when tabId is omitted.',
         },
+        includeHidden: {
+          type: 'boolean',
+          description: INCLUDE_HIDDEN_DESCRIPTION,
+        },
       },
       required: [],
     },
@@ -225,7 +233,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.SNAPSHOT,
     description:
-      'Compact accessibility snapshot of the page, one line per element: ref role "name" value=".." and state flags (disabled, checked, expanded, required, invalid). Refs stay stable for the same element while it remains in the DOM.\nPreferred order: chrome_snapshot -> act by ref (chrome_click_element / chrome_fill_or_select / chrome_computer with observe:true) -> read the diff. Take a screenshot only when layout or pixels matter.\nPass `since` (a previous snapshotId) to receive only added, removed, and changed lines.\nPass pierce:true to walk closed shadow roots and cross-origin frames via CDP. Those refs look like cdp_N and are resolved with DOM.resolveNode. chrome_click_element and chrome_fill_or_select still use ref_ refs. If CDP is unavailable the snapshot falls back and says why. If DevTools is attached, pierce fails instead of falling back.',
+      'Compact accessibility snapshot of the page, one line per element: ref role "name" value=".." and state flags (disabled, checked, expanded, required, invalid). Refs stay stable for the same element while it remains in the DOM. Hidden text is dropped unless includeHidden is true. Returned lines, title, and diffs are inside the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION +
+      '\nPreferred order: chrome_snapshot -> act by ref (chrome_click_element / chrome_fill_or_select / chrome_computer with observe:true) -> read the diff. Take a screenshot only when layout or pixels matter.\nPass `since` (a previous snapshotId) to receive only added, removed, and changed lines.\nPass pierce:true to walk closed shadow roots and cross-origin frames via CDP. Those refs look like cdp_N and are resolved with DOM.resolveNode. includeHidden applies to the accessibility snapshot; pierce follows the CDP tree. chrome_click_element and chrome_fill_or_select still use ref_ refs. If CDP is unavailable the snapshot falls back and says why. If DevTools is attached, pierce fails instead of falling back.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -273,6 +283,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Walk closed shadow roots and cross-origin frames with CDP DOM.getDocument pierce and Target.setAutoAttach. Refs look like cdp_N (the backendNodeId) and are resolved with DOM.resolveNode. Omit or false to keep the accessibility snapshot and not attach the debugger. chrome_click_element and chrome_fill_or_select still use ref_ refs.',
         },
+        includeHidden: {
+          type: 'boolean',
+          description: INCLUDE_HIDDEN_DESCRIPTION,
+        },
       },
       required: [],
     },
@@ -280,7 +294,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.WAIT_FOR,
     description:
-      'Wait until a page condition is met. Conditions: text, textGone, selector, selectorGone, ref, refGone, urlMatches (regex), networkIdleMs (no requests for N ms), and domQuietMs. By default any one condition is enough. Pass all:true to require every condition. Returns {met, waitedMs}, or a timeout that names the unmet conditions.\nPreferred order: chrome_snapshot, act by ref with observe:true, then read the diff. Use chrome_wait_for when the next step depends on one of these conditions. Screenshot only if layout matters.',
+      'Wait until a page condition is met. Conditions: text, textGone, selector, selectorGone, ref, refGone, urlMatches (regex), networkIdleMs (no requests for N ms), and domQuietMs. By default any one condition is enough. Pass all:true to require every condition. Returns {met, waitedMs}. A text match is also returned inside the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION +
+      '\nPreferred order: chrome_snapshot, act by ref with observe:true, then read the diff. Use chrome_wait_for when the next step depends on one of these conditions. Screenshot only if layout matters.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -513,6 +529,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'After the action, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
         },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
+        },
       },
       required: ['action'],
     },
@@ -597,7 +617,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.NAVIGATE,
     description:
-      'Navigate to a URL, refresh the current tab, or navigate browser history (back/forward)',
+      'Navigate to a URL, refresh the current tab, or navigate browser history (back/forward). A query that contains a cookie or token value returned earlier in this session is refused unless confirmCrossOrigin is true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -644,6 +664,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'boolean',
           description:
             'Refresh the current active tab instead of navigating to a URL. When true, the url parameter is ignored. Defaults to false',
+        },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
         },
       },
       required: [],
@@ -730,7 +754,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   },
   {
     name: TOOL_NAMES.BROWSER.WEB_FETCHER,
-    description: 'Fetch content from a web page',
+    description:
+      'Fetch content from a web page. Text and HTML are wrapped in the untrusted-content envelope. Hidden text is dropped unless includeHidden is true. ' +
+      UNTRUSTED_INSTRUCTION,
     inputSchema: {
       type: 'object',
       properties: {
@@ -767,13 +793,20 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'CSS selector to get content from a specific element. If provided, only content from this element will be returned',
         },
+        includeHidden: {
+          type: 'boolean',
+          description: INCLUDE_HIDDEN_DESCRIPTION,
+        },
       },
       required: [],
     },
   },
   {
     name: TOOL_NAMES.BROWSER.NETWORK_REQUEST,
-    description: 'Send a network request from the browser with cookies and other browser context',
+    description:
+      'Send a network request from the browser with cookies and other browser context. Response bodies are wrapped in the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION +
+      ' A query or body that contains a cookie or token value returned earlier in this session is refused unless confirmCrossOrigin is true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -802,6 +835,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Multipart/form-data descriptor. If provided, overrides body and builds FormData with optional file attachments. Shape: { fields?: Record<string,string|number|boolean>, files?: Array<{ name: string, fileUrl?: string, filePath?: string, base64Data?: string, filename?: string, contentType?: string }> }. Also supports a compact array form: [ [name, fileSpec, filename?], ... ] where fileSpec may be url:, file:, or base64:.',
         },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
+        },
       },
       required: ['url'],
     },
@@ -809,7 +846,8 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.NETWORK_CAPTURE,
     description:
-      'Unified network capture tool. Use action="start" to begin capturing, action="stop" to end and retrieve results. Set needResponseBody=true to capture response bodies (uses Debugger API, may conflict with DevTools). Default mode uses webRequest API (lightweight, no debugger conflict, but no response body).',
+      'Unified network capture tool. Use action="start" to begin capturing, action="stop" to end and retrieve results. Set needResponseBody=true to capture response bodies (uses Debugger API, may conflict with DevTools). Default mode uses webRequest API (lightweight, no debugger conflict, but no response body). Response and request bodies are wrapped in the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1047,7 +1085,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.JAVASCRIPT,
     description:
-      'Execute JavaScript code in a browser tab and return the result. Uses CDP Runtime.evaluate with awaitPromise and returnByValue; automatically falls back to chrome.scripting.executeScript if the debugger is busy. Output is sanitized (sensitive data redacted) and truncated by default.',
+      'Execute JavaScript code in a browser tab and return the result. Uses CDP Runtime.evaluate with awaitPromise and returnByValue; automatically falls back to chrome.scripting.executeScript if the debugger is busy. Output is sanitized (sensitive data redacted), truncated by default, and wrapped in the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION +
+      ' On unless highRiskTools.javascript is false. A click, fill, or script on a different origin from the last page read within 60s returns needs_confirmation until confirmCrossOrigin is true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1068,6 +1108,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Maximum output size in bytes after sanitization (default: 51200). Output exceeding this limit will be truncated.',
+        },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
         },
       },
       required: ['code'],
@@ -1146,6 +1190,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'After the click, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
         },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
+        },
       },
       required: [],
     },
@@ -1191,6 +1239,10 @@ export const TOOL_SCHEMAS: Tool[] = [
         observe: {
           description:
             'After the fill, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
+        },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
         },
       },
       required: ['value'],
@@ -1256,6 +1308,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Frame for fields that do not encode one in the ref. A ref suffix like ref_12@frameId selects that frame.',
+        },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
         },
       },
       required: ['fields'],
@@ -1349,6 +1405,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Target frame ID for iframe support.',
         },
+        confirmCrossOrigin: {
+          type: 'boolean',
+          description: CONFIRM_CROSS_ORIGIN_DESCRIPTION,
+        },
       },
       required: ['keys'],
     },
@@ -1356,7 +1416,8 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.CONSOLE,
     description:
-      'Capture console output from a browser tab. Supports snapshot mode (default; one-time capture with ~2s wait) and buffer mode (persistent per-tab buffer you can read/clear instantly without waiting).',
+      'Capture console output from a browser tab. Supports snapshot mode (default; one-time capture with ~2s wait) and buffer mode (persistent per-tab buffer you can read/clear instantly without waiting). Message text is wrapped in the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1428,7 +1489,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.FILE_UPLOAD,
     description:
-      'Upload files to web forms with file input elements using Chrome DevTools Protocol',
+      'Upload files to web forms with file input elements using Chrome DevTools Protocol. On unless highRiskTools.upload is false.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2157,7 +2218,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Grant or reset site permissions with Browser.grantPermissions and Browser.resetPermissions on the tab debugger session.',
       'permissions accepts camera, microphone, geolocation, notifications, and clipboardReadWrite. camera is sent as CDP videoCapture. microphone is sent as CDP audioCapture. The other names are sent unchanged. No other permission is granted.',
       'reset:true calls Browser.resetPermissions. Chrome resets the browser context. It has no per-origin reset. The origin is still required and must be listed. Pass reset or permissions, not both.',
-      'Default off until highRiskTools.grantPermission is true. The origin must also be listed in chrome.storage.local sitePolicyAllowOrigins (exact http(s) origins). A missing or empty list refuses the grant. chrome://, extension pages, and the Chrome Web Store are refused. Every call is appended to ~/.chrome-mcp-agent/audit.log.',
+      'Default off until highRiskTools.grantPermission is true. The origin must also be listed in chrome.storage.local sitePolicyAllowOrigins (exact http(s) origins or a host wildcard such as https://*.example.com). A missing or empty list refuses the grant. chrome://, extension pages, and the Chrome Web Store are refused. Every call is appended to ~/.chrome-mcp-agent/audit.log.',
       'If this tab session does not expose the Browser domain, the call fails and names the missing method. It does not attach a browser-wide debugger.',
       AGENT_PREFERRED_ORDER,
     ].join('\n'),
@@ -2267,6 +2328,24 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: {
           type: 'number',
           description: 'Window whose active tab is used when tabId is omitted.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.AUDIT_LOG,
+    description: [
+      'Read the last N entries from the local append-only audit log at ~/.chrome-mcp-agent/audit.log. Each line has time, tool, tab origin, an arg summary, and result ok or error. Fill values, cookie values, and URL queries are redacted. The log rotates at 5MB.',
+      'These checks make prompt injection harder and bound the damage. They cannot make it impossible.',
+      AGENT_PREFERRED_ORDER,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'number',
+          description: 'How many of the newest lines to return (default 50, max 200).',
         },
       },
       required: [],

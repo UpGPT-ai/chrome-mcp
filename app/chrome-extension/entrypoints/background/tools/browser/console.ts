@@ -1,6 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, policyOrigin, wrapUntrusted } from 'chrome-mcp-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
 import { consoleBuffer, BufferedConsoleMessage, BufferedConsoleException } from './console-buffer';
 
@@ -120,6 +120,27 @@ function applyResultFilters(
     exceptions,
     messageCount: messages.length,
     exceptionCount: exceptions.length,
+  };
+}
+
+function sealConsoleText(origin: string, value: string): string {
+  if (!value) return value;
+  return wrapUntrusted(origin, value);
+}
+
+/** Page-derived console text is wrapped. The tool's own status message stays raw. */
+function sealConsoleResult(result: ConsoleResult, origin: string): ConsoleResult {
+  return {
+    ...result,
+    tabTitle: sealConsoleText(origin, result.tabTitle || ''),
+    messages: result.messages.map((message) => ({
+      ...message,
+      text: sealConsoleText(origin, message.text || ''),
+    })),
+    exceptions: result.exceptions.map((exception) => ({
+      ...exception,
+      text: sealConsoleText(origin, exception.text || ''),
+    })),
   };
 }
 
@@ -276,7 +297,14 @@ class ConsoleTool extends BaseBrowserToolExecutor {
         };
 
         return {
-          content: [{ type: 'text', text: JSON.stringify(result) }],
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                sealConsoleResult(result, policyOrigin(result.tabUrl || targetTab.url)),
+              ),
+            },
+          ],
           isError: false,
         };
       }
@@ -295,7 +323,14 @@ class ConsoleTool extends BaseBrowserToolExecutor {
       });
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(filtered) }],
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              sealConsoleResult(filtered, policyOrigin(filtered.tabUrl || targetTab.url)),
+            ),
+          },
+        ],
         isError: false,
       };
     } catch (error: unknown) {

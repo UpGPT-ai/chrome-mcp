@@ -2673,6 +2673,263 @@ if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
     minParagraphLength: 2,
   };
 
+  // Keep in sync with hiddenTextDropReason in packages/shared/src/injection-guard.ts.
+  // Page scripts cannot import that module. includeHidden true skips every reason.
+  const OFFSCREEN_PX = 2000;
+  let includeHiddenText = false;
+  let hiddenReasonCache = new WeakMap();
+
+  function beginHiddenPass(includeHidden) {
+    includeHiddenText = includeHidden === true;
+    hiddenReasonCache = new WeakMap();
+  }
+
+  function endHiddenPass() {
+    includeHiddenText = false;
+    hiddenReasonCache = new WeakMap();
+  }
+
+  function viewOf(el) {
+    try {
+      const doc = el && el.ownerDocument;
+      if (doc && doc.defaultView) return doc.defaultView;
+    } catch (_) {
+      /* detached */
+    }
+    return window;
+  }
+
+  function parseCssColor(input) {
+    if (!input) return null;
+    const raw = String(input).trim().toLowerCase();
+    const short = /^#([0-9a-f]{3})$/.exec(raw);
+    if (short) {
+      const hex = short[1];
+      return {
+        r: parseInt(hex[0] + hex[0], 16),
+        g: parseInt(hex[1] + hex[1], 16),
+        b: parseInt(hex[2] + hex[2], 16),
+        a: 1,
+      };
+    }
+    const long = /^#([0-9a-f]{6})$/.exec(raw);
+    if (long) {
+      const hex = long[1];
+      return {
+        r: parseInt(hex.slice(0, 2), 16),
+        g: parseInt(hex.slice(2, 4), 16),
+        b: parseInt(hex.slice(4, 6), 16),
+        a: 1,
+      };
+    }
+    const rgb =
+      /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(raw);
+    if (!rgb) return null;
+    const r = Number(rgb[1]);
+    const g = Number(rgb[2]);
+    const b = Number(rgb[3]);
+    if (r > 255 || g > 255 || b > 255) return null;
+    const alpha = rgb[4] === undefined ? 1 : Number(rgb[4]);
+    if (!Number.isFinite(alpha)) return null;
+    return { r, g, b, a: alpha };
+  }
+
+  function isZeroMeasure(value) {
+    if (typeof value === 'number') return value === 0;
+    if (typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    return parseFloat(trimmed) === 0;
+  }
+
+  function opaqueBackground(el, own) {
+    let current = el;
+    let style = own;
+    for (let i = 0; i < 8 && current; i++) {
+      const parsed = parseCssColor(style && style.backgroundColor);
+      if (parsed && parsed.a >= 0.05) return style.backgroundColor;
+      current = current.parentElement;
+      if (!current) break;
+      try {
+        style = viewOf(current).getComputedStyle(current);
+      } catch (_) {
+        break;
+      }
+    }
+    return own ? own.backgroundColor : '';
+  }
+
+  function elementHiddenReason(el) {
+    if (includeHiddenText || !el || el.nodeType !== Node.ELEMENT_NODE) return null;
+    if (hiddenReasonCache.has(el)) return hiddenReasonCache.get(el);
+    const tag = el.tagName.toLowerCase();
+    let inNoscriptOrTemplate = false;
+    try {
+      if (typeof el.closest === 'function' && el.closest('noscript, template')) {
+        inNoscriptOrTemplate = true;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    const view = viewOf(el);
+    let cs = null;
+    try {
+      cs = view.getComputedStyle(el);
+    } catch (_) {
+      cs = null;
+    }
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    let opacity = cs ? cs.opacity : null;
+    if (!isZeroMeasure(opacity)) {
+      let parent = el.parentElement;
+      let depth = 0;
+      while (parent && depth < 20) {
+        if (hiddenReasonCache.has(parent)) {
+          if (hiddenReasonCache.get(parent) === 'opacity-0') opacity = '0';
+          break;
+        }
+        try {
+          if (isZeroMeasure(viewOf(parent).getComputedStyle(parent).opacity)) {
+            opacity = '0';
+            break;
+          }
+        } catch (_) {
+          break;
+        }
+        parent = parent.parentElement;
+        depth++;
+      }
+    }
+    let ariaHidden = false;
+    try {
+      ariaHidden = typeof el.closest === 'function' && !!el.closest('[aria-hidden="true"]');
+    } catch (_) {
+      ariaHidden = el.getAttribute && el.getAttribute('aria-hidden') === 'true';
+    }
+    let reason = null;
+    if (tag === 'noscript' || tag === 'template' || inNoscriptOrTemplate)
+      reason = 'noscript-or-template';
+    else if (
+      cs &&
+      String(cs.display || '')
+        .trim()
+        .toLowerCase() === 'none'
+    )
+      reason = 'display-none';
+    else if (
+      cs &&
+      String(cs.visibility || '')
+        .trim()
+        .toLowerCase() === 'hidden'
+    )
+      reason = 'visibility-hidden';
+    else if (ariaHidden) reason = 'aria-hidden';
+    else if (isZeroMeasure(opacity)) reason = 'opacity-0';
+    else if (rect && rect.width === 0 && rect.height === 0) reason = 'zero-size';
+    else if (
+      rect &&
+      (rect.right < -OFFSCREEN_PX ||
+        rect.bottom < -OFFSCREEN_PX ||
+        rect.left > view.innerWidth + OFFSCREEN_PX ||
+        rect.top > view.innerHeight + OFFSCREEN_PX)
+    )
+      reason = 'off-screen';
+    else if (cs && isZeroMeasure(cs.fontSize)) reason = 'font-size-0';
+    else if (cs) {
+      const foreground = parseCssColor(cs.color);
+      const background = parseCssColor(opaqueBackground(el, cs));
+      if (
+        foreground &&
+        background &&
+        foreground.a >= 0.05 &&
+        background.a >= 0.05 &&
+        foreground.r === background.r &&
+        foreground.g === background.g &&
+        foreground.b === background.b
+      ) {
+        reason = 'same-color-as-background';
+      }
+    }
+    hiddenReasonCache.set(el, reason);
+    return reason;
+  }
+
+  function hiddenPolicy(el) {
+    if (!el || !el.tagName) return 'all';
+    const tag = el.tagName.toLowerCase();
+    if (['script', 'style', 'meta', 'link', 'title'].includes(tag)) return 'skip';
+    if (includeHiddenText) return 'all';
+    if (tag === 'noscript' || tag === 'template') return 'skip';
+    const reason = elementHiddenReason(el);
+    if (!reason) return 'all';
+    if (reason === 'display-none' || reason === 'opacity-0' || reason === 'aria-hidden')
+      return 'skip';
+    return 'children';
+  }
+
+  function visibleText(node) {
+    if (!node) return '';
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+    if (node.nodeType === Node.COMMENT_NODE) return includeHiddenText ? node.textContent || '' : '';
+    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)
+      return '';
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const policy = hiddenPolicy(node);
+      if (policy === 'skip') return '';
+      if (
+        includeHiddenText &&
+        node.tagName &&
+        node.tagName.toLowerCase() === 'template' &&
+        node.content
+      ) {
+        return visibleText(node.content);
+      }
+      if (policy === 'children') {
+        let onlyChildren = '';
+        const elements = node.children || [];
+        for (let i = 0; i < elements.length; i++) onlyChildren += visibleText(elements[i]);
+        return onlyChildren;
+      }
+    }
+    let out = '';
+    const children = node.childNodes || [];
+    for (let i = 0; i < children.length; i++) out += visibleText(children[i]);
+    return out;
+  }
+
+  /** Drop hidden subtrees and hidden text on a clone. The live document is not modified. */
+  function stripHiddenFromClone(liveEl, cloneEl) {
+    if (!liveEl || !cloneEl || includeHiddenText) return;
+    const liveElements = liveEl.children ? Array.from(liveEl.children) : [];
+    const cloneElements = cloneEl.children ? Array.from(cloneEl.children) : [];
+    if (cloneEl.childNodes) {
+      const nodes = Array.from(cloneEl.childNodes);
+      for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].nodeType === Node.COMMENT_NODE && nodes[i].parentNode) {
+          nodes[i].parentNode.removeChild(nodes[i]);
+        }
+      }
+    }
+    for (let i = 0; i < liveElements.length && i < cloneElements.length; i++) {
+      const liveChild = liveElements[i];
+      const cloneChild = cloneElements[i];
+      const policy = hiddenPolicy(liveChild);
+      if (policy === 'skip') {
+        if (cloneChild.parentNode) cloneChild.parentNode.removeChild(cloneChild);
+        continue;
+      }
+      if (policy === 'children' && cloneChild.childNodes) {
+        const inner = Array.from(cloneChild.childNodes);
+        for (let j = 0; j < inner.length; j++) {
+          if (inner[j].nodeType !== Node.ELEMENT_NODE && inner[j].parentNode) {
+            inner[j].parentNode.removeChild(inner[j]);
+          }
+        }
+      }
+      stripHiddenFromClone(liveChild, cloneChild);
+    }
+  }
+
   // Listen for messages from the extension
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     const pingActions = ['search_tabs_content_ping', 'chrome_web_fetcher_ping'];
@@ -2684,23 +2941,33 @@ if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
 
     // Get HTML content
     else if (request.action === 'getHtmlContent') {
+      const includeHidden = request.includeHidden === true;
+      beginHiddenPass(includeHidden);
       try {
-        let rawHtml;
-
-        // If selector is specified, only get content from the matching element
-        if (request.selector) {
-          const element = document.querySelector(request.selector);
-          if (element) {
-            rawHtml = element.outerHTML;
-          } else {
-            throw new Error(`No element found matching selector: ${request.selector}`);
+        let rawHtml = '';
+        const live = request.selector
+          ? document.querySelector(request.selector)
+          : document.documentElement;
+        if (request.selector && !live) {
+          throw new Error(`No element found matching selector: ${request.selector}`);
+        }
+        if (live && !includeHidden && hiddenPolicy(live) === 'skip') {
+          rawHtml = '';
+        } else if (live) {
+          const clone = live.cloneNode(true);
+          if (!includeHidden && hiddenPolicy(live) === 'children') {
+            const inner = Array.from(clone.childNodes || []);
+            for (let i = 0; i < inner.length; i++) {
+              if (inner[i].nodeType !== Node.ELEMENT_NODE && inner[i].parentNode) {
+                inner[i].parentNode.removeChild(inner[i]);
+              }
+            }
           }
-        } else {
-          // Otherwise get the entire page content
-          rawHtml = document.documentElement.outerHTML;
+          stripHiddenFromClone(live, clone);
+          rawHtml = clone.outerHTML || '';
         }
 
-        const cleanedHtml = cleanHtmlContent(rawHtml);
+        const cleanedHtml = rawHtml ? cleanHtmlContent(rawHtml) : '';
 
         sendResponse({
           success: true,
@@ -2712,18 +2979,22 @@ if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
           success: false,
           error: `Failed to get HTML content: ${error.message}`,
         });
+      } finally {
+        endHiddenPass();
       }
     }
 
     // Get text content
     else if (request.action === 'getTextContent') {
+      const includeHidden = request.includeHidden === true;
+      beginHiddenPass(includeHidden);
       try {
         // If selector is specified, only get content from the matching element
         if (request.selector) {
           const element = document.querySelector(request.selector);
           if (element) {
-            // Directly get the text content of the element
-            const textContent = element.innerText;
+            const textContent =
+              !includeHidden && hiddenPolicy(element) === 'skip' ? '' : visibleText(element);
 
             sendResponse({
               success: true,
@@ -2734,8 +3005,11 @@ if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
             throw new Error(`No element found matching selector: ${request.selector}`);
           }
         } else {
-          // Otherwise use Readability to extract the main content
+          // Strip hidden text on the clone before Readability. The live document is unchanged.
           const documentClone = document.cloneNode(true);
+          if (!includeHidden && document.documentElement && documentClone.documentElement) {
+            stripHiddenFromClone(document.documentElement, documentClone.documentElement);
+          }
 
           const reader = new Readability(documentClone);
           const article = reader.parse();
@@ -2770,8 +3044,7 @@ if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
               metadata: metadata,
             });
           } else {
-            // Fallback to basic extraction
-            const textContent = document.body.innerText;
+            const textContent = document.body ? visibleText(document.body) : '';
             sendResponse({
               success: true,
               textContent: textContent,
@@ -2785,6 +3058,8 @@ if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
           success: false,
           error: `Failed to extract text content: ${error.message}`,
         });
+      } finally {
+        endHiddenPass();
       }
 
       return true; // Async response
@@ -2859,10 +3134,10 @@ if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
 
     for (const iframe of iframes) {
       try {
-        if (isSameOrigin(iframe) && isElementVisible(iframe)) {
+        if (isSameOrigin(iframe) && isElementVisible(iframe) && hiddenPolicy(iframe) !== 'skip') {
           const doc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (doc) {
-            const iframeText = doc.body.innerText;
+          if (doc && doc.body) {
+            const iframeText = visibleText(doc.body);
             if (iframeText && iframeText.trim().length >= config.minTextLength) {
               allIframeText += iframeText.trim() + '\n\n';
             }

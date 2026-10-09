@@ -1,6 +1,7 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
+import { ERROR_MESSAGES } from '@/common/constants';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, policyOrigin, wrapUntrusted } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 
 interface WebFetcherToolParams {
@@ -12,6 +13,20 @@ interface WebFetcherToolParams {
   background?: boolean; // do not activate/focus
   windowId?: number; // target window id to pick active tab or create tab
   reuseTab?: boolean; // reuse ONE dedicated tab, navigating it in place (no tab/window explosion)
+  includeHidden?: boolean;
+}
+
+function sealPageText(origin: string, value: unknown): unknown {
+  if (typeof value !== 'string' || value.length === 0) return value;
+  return wrapUntrusted(origin, value);
+}
+
+function sealPageFields(origin: string, value: unknown, keys: readonly string[]): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...record };
+  for (const key of keys) next[key] = sealPageText(origin, record[key]);
+  return next;
 }
 
 // A single dedicated tab reused across every `reuseTab: true` fetch. Module-level
@@ -90,9 +105,15 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
    * Execute web fetcher operation
    */
   async execute(args: WebFetcherToolParams): Promise<ToolResult> {
+    if (args.includeHidden !== undefined && typeof args.includeHidden !== 'boolean') {
+      return createErrorResponse(
+        `${ERROR_MESSAGES.INVALID_PARAMETERS}: includeHidden must be a boolean`,
+      );
+    }
     // Handle mutually exclusive parameters: if htmlContent is true, textContent is forced to false
     const htmlContent = args.htmlContent === true;
     const textContent = htmlContent ? false : args.textContent !== false; // Default is true, unless htmlContent is true or textContent is explicitly set to false
+    const includeHidden = args.includeHidden === true;
     const url = args.url;
     const selector = args.selector;
     const explicitTabId = args.tabId;
@@ -165,11 +186,12 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
         await chrome.windows.update(tab.windowId, { focused: true });
       }
 
-      // Prepare result object
+      const origin = policyOrigin(tab.url);
+      // Prepare result object. Page text is wrapped. The URL stays raw.
       const result: any = {
         success: true,
         url: tab.url,
-        title: tab.title,
+        title: sealPageText(origin, tab.title),
       };
 
       await this.injectContentScript(tab.id, ['inject-scripts/web-fetcher-helper.js']);
@@ -179,10 +201,11 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
         const htmlResponse = await this.sendMessageToTab(tab.id, {
           action: TOOL_MESSAGE_TYPES.WEB_FETCHER_GET_HTML_CONTENT,
           selector: selector,
+          includeHidden,
         });
 
         if (htmlResponse.success) {
-          result.htmlContent = htmlResponse.htmlContent;
+          result.htmlContent = sealPageText(origin, htmlResponse.htmlContent);
         } else {
           console.error('Failed to get HTML content:', htmlResponse.error);
           result.htmlContentError = htmlResponse.error;
@@ -194,25 +217,39 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
         const textResponse = await this.sendMessageToTab(tab.id, {
           action: TOOL_MESSAGE_TYPES.WEB_FETCHER_GET_TEXT_CONTENT,
           selector: selector,
+          includeHidden,
         });
 
         if (textResponse.success) {
-          result.textContent = textResponse.textContent;
+          result.textContent = sealPageText(origin, textResponse.textContent);
 
-          // Include article metadata if available
+          // Include article metadata if available. lang is a code, not page prose.
           if (textResponse.article) {
+            const article = sealPageFields(origin, textResponse.article, [
+              'title',
+              'byline',
+              'siteName',
+              'excerpt',
+            ]) as Record<string, unknown>;
             result.article = {
-              title: textResponse.article.title,
-              byline: textResponse.article.byline,
-              siteName: textResponse.article.siteName,
-              excerpt: textResponse.article.excerpt,
+              title: article.title,
+              byline: article.byline,
+              siteName: article.siteName,
+              excerpt: article.excerpt,
               lang: textResponse.article.lang,
             };
           }
 
           // Include page metadata if available
           if (textResponse.metadata) {
-            result.metadata = textResponse.metadata;
+            result.metadata = sealPageFields(origin, textResponse.metadata, [
+              'title',
+              'description',
+              'author',
+              'keywords',
+              'published',
+              'siteName',
+            ]);
           }
         } else {
           console.error('Failed to get text content:', textResponse.error);
@@ -288,14 +325,25 @@ class GetInteractiveElementsTool extends BaseBrowserToolExecutor {
         return createErrorResponse(result.error || 'Failed to get interactive elements');
       }
 
+      const origin = policyOrigin(tab.url);
+      const elements = Array.isArray(result.elements)
+        ? result.elements.map((element: { text?: unknown }) => {
+            if (!element || typeof element !== 'object' || typeof element.text !== 'string') {
+              return element;
+            }
+            if (!element.text) return element;
+            return { ...element, text: wrapUntrusted(origin, element.text) };
+          })
+        : result.elements;
+
       return {
         content: [
           {
             type: 'text',
             text: JSON.stringify({
               success: true,
-              elements: result.elements,
-              count: result.elements.length,
+              elements,
+              count: Array.isArray(elements) ? elements.length : 0,
               query: {
                 textQuery,
                 selector,

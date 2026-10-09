@@ -51,6 +51,9 @@ export class FileHandler {
         case 'appendAudit':
           return this.appendAudit(request?.line);
 
+        case 'readAudit':
+          return this.readAudit(request?.limit);
+
         case 'analyzeTrace': {
           const targetPath = traceFilePath || filePath;
           if (!targetPath) {
@@ -293,6 +296,36 @@ export class FileHandler {
     }
     fs.appendFileSync(filePath, `${line}\n`, 'utf8');
     return { success: true };
+  }
+
+  /**
+   * Last N JSON objects from ~/.chrome-mcp-agent/audit.log.
+   * 200 is the same cap as parseAuditLimit. It is not imported: this package
+   * typechecks against chrome-mcp-shared dist, which lacks new exports until tsup.
+   */
+  private readAudit(limit: unknown): { success: boolean; entries?: unknown[]; error?: string } {
+    let count = 50;
+    if (limit !== undefined && limit !== null) {
+      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 200) {
+        return { success: false, error: 'limit must be an integer from 1 to 200' };
+      }
+      count = limit;
+    }
+    const filePath = path.join(os.homedir(), '.chrome-mcp-agent', 'audit.log');
+    if (!fs.existsSync(filePath)) return { success: true, entries: [] };
+    const lines = fs
+      .readFileSync(filePath, 'utf8')
+      .split('\n')
+      .filter((line) => line.startsWith('{'));
+    const entries: unknown[] = [];
+    for (const line of lines.slice(-count)) {
+      try {
+        entries.push(JSON.parse(line));
+      } catch {
+        // A torn line is skipped. The writer only appends one JSON object.
+      }
+    }
+    return { success: true, entries };
   }
 
   /**

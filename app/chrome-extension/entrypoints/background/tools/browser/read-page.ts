@@ -1,6 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, originFromUrl, wrapUntrusted } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { ERROR_MESSAGES } from '@/common/constants';
 import { listMarkersForUrl } from '@/entrypoints/background/element-marker/element-marker-storage';
@@ -17,6 +17,22 @@ interface ReadPageParams {
   refId?: string; // focus on subtree rooted at this refId
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
+  includeHidden?: boolean;
+}
+
+function deliverReadPage(origin: string, payload: Record<string, any>): ToolResult {
+  if (typeof payload.pageContent === 'string') {
+    payload.pageContent = wrapUntrusted(origin, payload.pageContent);
+  }
+  if (Array.isArray(payload.elements)) {
+    payload.elements = payload.elements.map((element) => {
+      if (element && typeof element.text === 'string') {
+        return { ...element, text: wrapUntrusted(origin, element.text) };
+      }
+      return element;
+    });
+  }
+  return { content: [{ type: 'text', text: JSON.stringify(payload) }], isError: false };
 }
 
 class ReadPageTool extends BaseBrowserToolExecutor {
@@ -39,6 +55,11 @@ class ReadPageTool extends BaseBrowserToolExecutor {
     if (requestedDepth !== undefined && (!Number.isInteger(requestedDepth) || requestedDepth < 0)) {
       return createErrorResponse(
         `${ERROR_MESSAGES.INVALID_PARAMETERS}: depth must be a non-negative integer`,
+      );
+    }
+    if (args?.includeHidden !== undefined && typeof args.includeHidden !== 'boolean') {
+      return createErrorResponse(
+        `${ERROR_MESSAGES.INVALID_PARAMETERS}: includeHidden must be a boolean`,
       );
     }
 
@@ -75,6 +96,7 @@ class ReadPageTool extends BaseBrowserToolExecutor {
         filter: filter || null,
         depth: requestedDepth,
         refId: focusRefId || undefined,
+        includeHidden: args?.includeHidden === true,
       });
 
       // Evaluate tree result and decide whether to fallback
@@ -153,11 +175,9 @@ class ReadPageTool extends BaseBrowserToolExecutor {
       };
 
       // Normal path: return tree
+      const origin = originFromUrl(tab.url);
       if (treeOk && !isSparse) {
-        return {
-          content: [{ type: 'text', text: JSON.stringify(basePayload) }],
-          isError: false,
-        };
+        return deliverReadPage(origin, basePayload);
       }
 
       // When refId is explicitly provided, do not fallback (refs are frame-local and may expire)
@@ -202,10 +222,7 @@ class ReadPageTool extends BaseBrowserToolExecutor {
             basePayload.pageContent = formatElementsAsPageContent(merged);
           }
 
-          return {
-            content: [{ type: 'text', text: JSON.stringify(basePayload) }],
-            isError: false,
-          };
+          return deliverReadPage(origin, basePayload);
         }
       } catch (fallbackErr) {
         console.warn('read_page fallback failed:', fallbackErr);

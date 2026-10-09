@@ -13,8 +13,11 @@ import {
   pierceBoxBudget,
   pierceFailureAction,
   pierceTreeHasBackendId,
+  originFromUrl,
   prefixSnapshotLine,
   quadIntersectsRect,
+  wrapPageLines,
+  wrapUntrusted,
   unmatchedFrames,
   viewportRectFromLayout,
 } from 'chrome-mcp-shared';
@@ -114,6 +117,7 @@ interface SnapshotParams {
   /** When set, snapshot only this frame (used for cross-origin frameId targeting). */
   frameId?: number;
   /** CDP DOM.getDocument pierce. Omit to keep the accessibility snapshot. */
+  includeHidden?: boolean;
   pierce?: boolean;
 }
 
@@ -123,6 +127,7 @@ export interface SnapshotQuery {
   refId?: string;
   maxItems: number;
   frameId?: number;
+  includeHidden?: boolean;
 }
 
 interface LocalFrameSnapshot {
@@ -174,7 +179,14 @@ export function normalizeSnapshotQuery(
     }
     frameId = args.frameId;
   }
-  return { scope, filter, refId: refId || undefined, maxItems, frameId };
+  return {
+    scope,
+    filter,
+    refId: refId || undefined,
+    maxItems,
+    frameId,
+    includeHidden: args?.includeHidden === true,
+  };
 }
 
 function rememberSnapshot(tabId: number, captured: CapturedSnapshot): string {
@@ -217,6 +229,11 @@ class SnapshotTool extends BaseBrowserToolExecutor {
 
     if (args?.pierce !== undefined && typeof args.pierce !== 'boolean') {
       return createErrorResponse(`${ERROR_MESSAGES.INVALID_PARAMETERS}: pierce must be a boolean`);
+    }
+    if (args?.includeHidden !== undefined && typeof args.includeHidden !== 'boolean') {
+      return createErrorResponse(
+        `${ERROR_MESSAGES.INVALID_PARAMETERS}: includeHidden must be a boolean`,
+      );
     }
 
     const since = typeof args?.since === 'string' ? args.since.trim() : '';
@@ -293,6 +310,7 @@ class SnapshotTool extends BaseBrowserToolExecutor {
           ? { pierceFallback }
           : {};
 
+      const origin = originFromUrl(captured.url || tab.url);
       if (baseline) {
         const diff: SnapshotLineDiff = diffSnapshotLines(baseline.lines, captured.lines);
         return ok({
@@ -302,11 +320,11 @@ class SnapshotTool extends BaseBrowserToolExecutor {
           scope: query.scope,
           filter: query.filter,
           url: captured.url,
-          title: captured.title,
+          title: wrapUntrusted(origin, captured.title),
           truncated: captured.truncated,
-          added: diff.added,
-          removed: diff.removed,
-          changed: diff.changed,
+          added: wrapPageLines(origin, diff.added),
+          removed: wrapPageLines(origin, diff.removed),
+          changed: wrapPageLines(origin, diff.changed),
           ...pierceFields,
         });
       }
@@ -317,10 +335,10 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         scope: query.scope,
         filter: query.filter,
         url: captured.url,
-        title: captured.title,
+        title: wrapUntrusted(origin, captured.title),
         count: captured.lines.length,
         truncated: captured.truncated,
-        lines: captured.lines,
+        lines: wrapPageLines(origin, captured.lines),
         ...pierceFields,
         tips: pierceUsed
           ? 'Pierce refs look like cdp_N and are the CDP backendNodeId. chrome_file_chooser accepts them. chrome_click_element and chrome_fill_or_select still use ref_ refs from a snapshot without pierce. Pass since to diff, or observe:true on an action. Screenshot only if layout matters.'
@@ -645,6 +663,7 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         filter: query.filter,
         refId,
         maxItems: query.maxItems,
+        includeHidden: query.includeHidden === true,
       },
       frameId,
     );

@@ -31,6 +31,12 @@ export function getAuthTokenPath(): string {
  * added later (or a path spelled in a way the router normalizes) fails closed instead of open.
  * /agent/* and /ask-extension serve the extension UI, which has no token; they are protected only
  * by the Host and Origin checks (documented residual risk).
+ *
+ * /agent/* stays exempt on purpose. The side panel opens the agent stream with
+ * `new EventSource(url)` (useAgentServer.ts), and EventSource cannot set an
+ * Authorization header. The extension also cannot read ~/.chrome-mcp-agent/auth-token.
+ * Requiring a bearer token here would break that stream. Host and Origin checks
+ * still apply. This residual risk remains until those callers can send the token.
  */
 const TOKEN_EXEMPT_EXACT = new Set(['/ping', '/ask-extension']);
 const TOKEN_EXEMPT_PREFIXES = ['/agent/'];

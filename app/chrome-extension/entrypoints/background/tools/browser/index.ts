@@ -54,6 +54,7 @@ export { printPdfTool } from './print-pdf';
 export { grantPermissionTool } from './grant-permission';
 export { clipboardTool } from './clipboard';
 export { requestHumanTool } from './request-human';
+export { auditLogTool } from './audit-log-tool';
 export { reloadExtensionTool } from './reload-extension';
 export {
   recordingTool,

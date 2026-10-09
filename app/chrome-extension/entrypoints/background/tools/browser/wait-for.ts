@@ -8,7 +8,9 @@ import {
   formatWaitTimeout,
   parseAgentRef,
   parseWaitArgs,
+  policyOrigin,
   urlMatchesPattern,
+  wrapUntrusted,
   type ParsedWait,
   type WaitArgs,
   type WaitConditionName,
@@ -117,6 +119,28 @@ function ok(payload: unknown): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(payload) }], isError: false };
 }
 
+async function originOfTab(tabId: number): Promise<string> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return policyOrigin(tab.url || tab.pendingUrl || '');
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** The matched page text is wrapped. Other wait fields stay structured. */
+function withMatchedText(
+  payload: { met: readonly string[]; waitedMs: number },
+  origin: string,
+  parsed: ParsedWait,
+): Record<string, unknown> {
+  const parts: string[] = [];
+  if (payload.met.includes('text') && parsed.text) parts.push(parsed.text);
+  if (payload.met.includes('textGone') && parsed.textGone) parts.push(parsed.textGone);
+  if (parts.length === 0) return { ...payload };
+  return { ...payload, match: wrapUntrusted(origin, parts.join('\n')) };
+}
+
 function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -199,7 +223,11 @@ class WaitForTool extends BaseBrowserToolExecutor {
         const signals = await this.collectSignals(tab.id, frame, parsed, network);
         const verdict = evaluateWaitConditions(parsed, signals);
         if (verdict.done) {
-          return ok({ met: verdict.met, waitedMs: Date.now() - started });
+          const payload = { met: verdict.met, waitedMs: Date.now() - started };
+          if (verdict.met.includes('text') || verdict.met.includes('textGone')) {
+            return ok(withMatchedText(payload, await originOfTab(tab.id), parsed));
+          }
+          return ok(payload);
         }
         if (Date.now() >= deadline) {
           return createErrorResponse(formatWaitTimeout(parsed.timeoutMs, verdict.unmet));
@@ -240,7 +268,7 @@ class WaitForTool extends BaseBrowserToolExecutor {
     );
     if (resp && resp.success === true) {
       const waitedMs = typeof resp.tookMs === 'number' ? resp.tookMs : parsed.timeoutMs;
-      return ok({ met: [kind], waitedMs });
+      return ok(withMatchedText({ met: [kind], waitedMs }, await originOfTab(tabId), parsed));
     }
     if (resp && resp.reason === 'timeout') {
       return createErrorResponse(formatWaitTimeout(parsed.timeoutMs, [kind]));

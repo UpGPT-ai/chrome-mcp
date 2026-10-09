@@ -2,12 +2,18 @@ import {
   FILE_CHOOSER_ALLOW_DIRS_KEY,
   HIGH_RISK_STORAGE_KEY,
   SITE_POLICY_ALLOW_ORIGINS_KEY,
+  SITE_POLICY_DENY_ORIGINS_KEY,
+  SITE_POLICY_MODE_KEY,
   parseFileAllowDirs,
   parseHighRiskFlags,
   type HighRiskFlags,
 } from 'chrome-mcp-shared';
 
-/** Missing or unreadable storage fails closed. There is no options toggle yet. */
+/**
+ * Missing or unreadable storage uses the defaults.
+ * javascript and upload stay on. Every other toggle stays off.
+ * There is no options page yet. The storage keys are the toggles.
+ */
 export async function readHighRiskFlags(): Promise<HighRiskFlags> {
   try {
     const stored = await chrome.storage.local.get(HIGH_RISK_STORAGE_KEY);
@@ -37,7 +43,7 @@ export async function readFileAllowDirs(): Promise<string[] | null | { error: st
 /**
  * Missing, empty, and unreadable storage refuse chrome_grant_permission.
  * A present value is returned for matchSitePolicyOrigin, including malformed lists.
- * There is no options page yet. Item 8 can own this key later.
+ * Entries may be exact origins or host wildcards. There is no options page yet.
  */
 export async function readSitePolicyAllowOrigins(): Promise<
   { stored: unknown } | { error: string }
@@ -52,5 +58,28 @@ export async function readSitePolicyAllowOrigins(): Promise<
     return {
       error: `Site policy could not be read (storage key ${SITE_POLICY_ALLOW_ORIGINS_KEY}). chrome_grant_permission refused.`,
     };
+  }
+}
+
+/**
+ * Allow list, extra deny patterns, and mode for the tool choke point.
+ * Unreadable storage is an error so a broken allowlist cannot fail open.
+ */
+export async function readSitePolicySettings(): Promise<
+  { allow: unknown; deny: unknown; mode: unknown } | { error: string }
+> {
+  try {
+    const stored = await chrome.storage.local.get([
+      SITE_POLICY_ALLOW_ORIGINS_KEY,
+      SITE_POLICY_DENY_ORIGINS_KEY,
+      SITE_POLICY_MODE_KEY,
+    ]);
+    return {
+      allow: stored?.[SITE_POLICY_ALLOW_ORIGINS_KEY],
+      deny: stored?.[SITE_POLICY_DENY_ORIGINS_KEY],
+      mode: stored?.[SITE_POLICY_MODE_KEY],
+    };
+  } catch {
+    return { error: 'Site policy could not be read. The call was refused.' };
   }
 }

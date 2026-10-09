@@ -88,7 +88,8 @@
     if (alt && alt.trim()) return alt.trim();
     if (/** @type {HTMLElement} */ (el).id) {
       const lab = document.querySelector(`label[for="${/** @type {HTMLElement} */ (el).id}"]`);
-      if (lab && lab.textContent && lab.textContent.trim()) return lab.textContent.trim();
+      const labelText = lab ? visibleText(lab).trim() : '';
+      if (labelText) return labelText;
     }
     if (tag === 'input') {
       const input = /** @type {HTMLInputElement} */ (el);
@@ -106,7 +107,7 @@
       if (text.trim()) return text.trim();
     }
     if (/^h[1-6]$/.test(tag)) {
-      const t = el.textContent;
+      const t = visibleText(el);
       if (t && t.trim()) return t.trim().substring(0, MAX_LINE_LABEL);
     }
     if (tag === 'img') {
@@ -128,15 +129,252 @@
     return '';
   }
 
+  // Keep in sync with hiddenTextDropReason in packages/shared/src/injection-guard.ts.
+  // Page scripts cannot import that module. includeHidden true skips every reason.
+  // script/style/meta/link/title stay dropped even when includeHidden is set.
+  const OFFSCREEN_PX = 2000;
+  let includeHiddenText = false;
+  let hiddenReasonCache = new WeakMap();
+
+  function beginHiddenPass(includeHidden) {
+    includeHiddenText = includeHidden === true;
+    hiddenReasonCache = new WeakMap();
+  }
+
+  function endHiddenPass() {
+    includeHiddenText = false;
+    hiddenReasonCache = new WeakMap();
+  }
+
+  function viewOf(el) {
+    try {
+      const doc = el && el.ownerDocument;
+      if (doc && doc.defaultView) return doc.defaultView;
+    } catch (_) {
+      /* detached */
+    }
+    return window;
+  }
+
+  function parseCssColor(input) {
+    if (!input) return null;
+    const raw = String(input).trim().toLowerCase();
+    const short = /^#([0-9a-f]{3})$/.exec(raw);
+    if (short) {
+      const hex = short[1];
+      return {
+        r: parseInt(hex[0] + hex[0], 16),
+        g: parseInt(hex[1] + hex[1], 16),
+        b: parseInt(hex[2] + hex[2], 16),
+        a: 1,
+      };
+    }
+    const long = /^#([0-9a-f]{6})$/.exec(raw);
+    if (long) {
+      const hex = long[1];
+      return {
+        r: parseInt(hex.slice(0, 2), 16),
+        g: parseInt(hex.slice(2, 4), 16),
+        b: parseInt(hex.slice(4, 6), 16),
+        a: 1,
+      };
+    }
+    const rgb =
+      /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(raw);
+    if (!rgb) return null;
+    const r = Number(rgb[1]);
+    const g = Number(rgb[2]);
+    const b = Number(rgb[3]);
+    if (r > 255 || g > 255 || b > 255) return null;
+    const alpha = rgb[4] === undefined ? 1 : Number(rgb[4]);
+    if (!Number.isFinite(alpha)) return null;
+    return { r, g, b, a: alpha };
+  }
+
+  function isZeroMeasure(value) {
+    if (typeof value === 'number') return value === 0;
+    if (typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    return parseFloat(trimmed) === 0;
+  }
+
+  function opaqueBackground(el, own) {
+    let current = el;
+    let style = own;
+    for (let i = 0; i < 8 && current; i++) {
+      const parsed = parseCssColor(style && style.backgroundColor);
+      if (parsed && parsed.a >= 0.05) return style.backgroundColor;
+      current = current.parentElement;
+      if (!current) break;
+      try {
+        style = viewOf(current).getComputedStyle(current);
+      } catch (_) {
+        break;
+      }
+    }
+    return own ? own.backgroundColor : '';
+  }
+
+  /** Reason string from hiddenTextDropReason, or null when the element is kept. */
+  function elementHiddenReason(el) {
+    if (includeHiddenText || !el || el.nodeType !== Node.ELEMENT_NODE) return null;
+    if (hiddenReasonCache.has(el)) return hiddenReasonCache.get(el);
+    const tag = el.tagName.toLowerCase();
+    let inNoscriptOrTemplate = false;
+    try {
+      if (typeof el.closest === 'function' && el.closest('noscript, template')) {
+        inNoscriptOrTemplate = true;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    const view = viewOf(el);
+    let cs = null;
+    try {
+      cs = view.getComputedStyle(el);
+    } catch (_) {
+      cs = null;
+    }
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    let opacity = cs ? cs.opacity : null;
+    if (!isZeroMeasure(opacity)) {
+      let parent = el.parentElement;
+      let depth = 0;
+      while (parent && depth < 20) {
+        if (hiddenReasonCache.has(parent)) {
+          if (hiddenReasonCache.get(parent) === 'opacity-0') opacity = '0';
+          break;
+        }
+        try {
+          const parentOpacity = viewOf(parent).getComputedStyle(parent).opacity;
+          if (isZeroMeasure(parentOpacity)) {
+            opacity = '0';
+            break;
+          }
+        } catch (_) {
+          break;
+        }
+        parent = parent.parentElement;
+        depth++;
+      }
+    }
+    let ariaHidden = false;
+    try {
+      ariaHidden = typeof el.closest === 'function' && !!el.closest('[aria-hidden="true"]');
+    } catch (_) {
+      ariaHidden = el.getAttribute && el.getAttribute('aria-hidden') === 'true';
+    }
+    let reason = null;
+    if (tag === 'noscript' || tag === 'template' || inNoscriptOrTemplate)
+      reason = 'noscript-or-template';
+    else if (
+      cs &&
+      String(cs.display || '')
+        .trim()
+        .toLowerCase() === 'none'
+    )
+      reason = 'display-none';
+    else if (
+      cs &&
+      String(cs.visibility || '')
+        .trim()
+        .toLowerCase() === 'hidden'
+    )
+      reason = 'visibility-hidden';
+    else if (ariaHidden) reason = 'aria-hidden';
+    else if (isZeroMeasure(opacity)) reason = 'opacity-0';
+    else if (rect && rect.width === 0 && rect.height === 0) reason = 'zero-size';
+    else if (
+      rect &&
+      (rect.right < -OFFSCREEN_PX ||
+        rect.bottom < -OFFSCREEN_PX ||
+        rect.left > view.innerWidth + OFFSCREEN_PX ||
+        rect.top > view.innerHeight + OFFSCREEN_PX)
+    )
+      reason = 'off-screen';
+    else if (cs && isZeroMeasure(cs.fontSize)) reason = 'font-size-0';
+    else if (cs) {
+      const foreground = parseCssColor(cs.color);
+      const background = parseCssColor(opaqueBackground(el, cs));
+      if (
+        foreground &&
+        background &&
+        foreground.a >= 0.05 &&
+        background.a >= 0.05 &&
+        foreground.r === background.r &&
+        foreground.g === background.g &&
+        foreground.b === background.b
+      ) {
+        reason = 'same-color-as-background';
+      }
+    }
+    hiddenReasonCache.set(el, reason);
+    return reason;
+  }
+
   /**
-   * Check if element is visible in DOM
-   * @param {Element} el
+   * skip: do not emit this element or its descendants.
+   * children: drop this element's own text, still walk descendants.
+   * all: the element can be included.
    */
-  function isVisible(el) {
-    const cs = window.getComputedStyle(/** @type {HTMLElement} */ (el));
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-    const he = /** @type {HTMLElement} */ (el);
-    return he.offsetWidth > 0 && he.offsetHeight > 0;
+  function hiddenPolicy(el) {
+    if (!el || !el.tagName) return 'all';
+    const tag = el.tagName.toLowerCase();
+    if (['script', 'style', 'meta', 'link', 'title'].includes(tag)) return 'skip';
+    if (includeHiddenText) return 'all';
+    if (tag === 'noscript' || tag === 'template') return 'skip';
+    const reason = elementHiddenReason(el);
+    if (!reason) return 'all';
+    if (reason === 'display-none' || reason === 'opacity-0' || reason === 'aria-hidden')
+      return 'skip';
+    return 'children';
+  }
+
+  function forEachChildElement(el, fn) {
+    const children = el.children || [];
+    for (let i = 0; i < children.length; i++) fn(children[i]);
+    if (
+      includeHiddenText &&
+      el.tagName &&
+      el.tagName.toLowerCase() === 'template' &&
+      el.content &&
+      el.content.children
+    ) {
+      const inner = el.content.children;
+      for (let i = 0; i < inner.length; i++) fn(inner[i]);
+    }
+  }
+
+  /** Visible text only. HTML comments and hidden descendants stay out unless includeHidden. */
+  function visibleText(node) {
+    if (!node) return '';
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+    if (node.nodeType === Node.COMMENT_NODE) return includeHiddenText ? node.textContent || '' : '';
+    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)
+      return '';
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const policy = hiddenPolicy(node);
+      if (policy === 'skip') return '';
+      if (
+        includeHiddenText &&
+        node.tagName &&
+        node.tagName.toLowerCase() === 'template' &&
+        node.content
+      ) {
+        return visibleText(node.content);
+      }
+      if (policy === 'children') {
+        let onlyChildren = '';
+        const elements = node.children || [];
+        for (let i = 0; i < elements.length; i++) onlyChildren += visibleText(elements[i]);
+        return onlyChildren;
+      }
+    }
+    let out = '';
+    const children = node.childNodes || [];
+    for (let i = 0; i < children.length; i++) out += visibleText(children[i]);
+    return out;
   }
 
   /**
@@ -463,9 +701,8 @@
    */
   function shouldInclude(el, cfg) {
     const tag = el.tagName.toLowerCase();
-    if (['script', 'style', 'meta', 'link', 'title', 'noscript'].includes(tag)) return false;
-    if (el.getAttribute('aria-hidden') === 'true') return false;
-    if (!isVisible(el)) return false;
+    if (['script', 'style', 'meta', 'link', 'title'].includes(tag)) return false;
+    if (hiddenPolicy(el) !== 'all') return false;
     if (cfg.filter !== 'all') {
       const r = /** @type {HTMLElement} */ (el).getBoundingClientRect();
       if (
@@ -532,7 +769,9 @@
     if (state.processed >= MAX_NODES) return;
     if (state.visited.has(el)) return;
     state.visited.add(el);
-    const include = shouldInclude(el, cfg) || depth === 0;
+    const policy = hiddenPolicy(el);
+    if (policy === 'skip') return;
+    const include = policy === 'all' && (shouldInclude(el, cfg) || depth === 0);
     if (include) {
       const role = inferRole(el);
       let label = inferLabel(el);
@@ -592,12 +831,11 @@
     }
     if (state.processed >= MAX_NODES) return;
     // Traverse light DOM children
-    if (/** @type {HTMLElement} */ (el).children && depth < maxDepth) {
-      const children = /** @type {HTMLElement} */ (el).children;
-      for (let i = 0; i < children.length; i++) {
-        if (state.processed >= MAX_NODES) break;
-        traverse(children[i], include ? depth + 1 : depth, cfg, out, refMap, state);
-      }
+    if (depth < maxDepth) {
+      forEachChildElement(el, (child) => {
+        if (state.processed >= MAX_NODES) return;
+        traverse(child, include ? depth + 1 : depth, cfg, out, refMap, state);
+      });
     }
     // Traverse shadow DOM roots (limited by maxDepth and MAX_NODES)
     try {
@@ -620,6 +858,7 @@
    * @param {{maxDepth?: number, refId?: string}|undefined} options
    */
   function __generateAccessibilityTree(filter, options) {
+    beginHiddenPass(options && options.includeHidden === true);
     try {
       const start = performance && performance.now ? performance.now() : Date.now();
       const out = [];
@@ -678,6 +917,8 @@
         'Error generating accessibility tree: ' +
           (err && err.message ? err.message : 'Unknown error'),
       );
+    } finally {
+      endHiddenPass();
     }
   }
 
@@ -731,7 +972,7 @@
     const now = el.getAttribute && el.getAttribute('aria-valuenow');
     if (now != null && String(now) !== '') return String(now);
     if (/** @type {HTMLElement} */ (el).isContentEditable) {
-      const text = (el.textContent || '').trim();
+      const text = visibleText(el).trim();
       return text || null;
     }
     return null;
@@ -812,6 +1053,15 @@
    */
   function __generateCompactSnapshot(options) {
     const opts = options || {};
+    beginHiddenPass(opts.includeHidden === true);
+    try {
+      return generateCompactSnapshotBody(opts);
+    } finally {
+      endHiddenPass();
+    }
+  }
+
+  function generateCompactSnapshotBody(opts) {
     const scope = opts.scope === 'viewport' ? 'viewport' : 'page';
     const filter = opts.filter === 'interactive' ? 'interactive' : 'all';
     const maxItems =
@@ -842,9 +1092,8 @@
 
     const includeElement = (el) => {
       const tag = el.tagName.toLowerCase();
-      if (['script', 'style', 'meta', 'link', 'title', 'noscript'].includes(tag)) return false;
-      if (el.getAttribute('aria-hidden') === 'true') return false;
-      if (!isVisible(el)) return false;
+      if (['script', 'style', 'meta', 'link', 'title'].includes(tag)) return false;
+      if (hiddenPolicy(el) !== 'all') return false;
       if (scope === 'viewport' && !intersectsViewport(el)) return false;
       if (filter === 'interactive') return isInteractive(el);
       if (isInteractive(el) || isStructural(el) || isFormishContainer(el)) return true;
@@ -859,6 +1108,7 @@
       state.processed++;
 
       const tag = el.tagName.toLowerCase();
+      if (hiddenPolicy(el) === 'skip') return;
       if (tag === 'iframe' || tag === 'frame') {
         // Same-origin documents are snapshotted by the background via frameId.
         // Cross-origin documents are listed and not entered from this frame.
@@ -888,8 +1138,7 @@
       }
       if (depth >= MAX_DEPTH || state.processed >= MAX_NODES) return;
 
-      const children = /** @type {HTMLElement} */ (el).children || [];
-      for (let i = 0; i < children.length; i++) walk(children[i], depth + 1);
+      forEachChildElement(el, (child) => walk(child, depth + 1));
 
       // Open shadow roots at any depth. Closed roots are not reachable.
       try {
@@ -1300,6 +1549,7 @@
         const result = __generateAccessibilityTree(request.filter || null, {
           maxDepth: request.depth,
           refId: request.refId,
+          includeHidden: request.includeHidden === true,
         });
         if (result && result.error) {
           sendResponse({ success: false, error: result.error });
@@ -1315,6 +1565,7 @@
             filter: request.filter,
             refId: request.refId,
             maxItems: request.maxItems,
+            includeHidden: request.includeHidden === true,
           });
           if (result && result.error) {
             sendResponse({ success: false, error: result.error });
@@ -1487,33 +1738,26 @@
               return (2 * inter) / (A.length + B.length);
             };
             let best = { el: null, score: 0 };
-            // Deep traversal including shadow roots
+            // Deep traversal including shadow roots. Hidden text is not a click target.
+            beginHiddenPass(false);
             const stack = [document.documentElement];
             let visited = 0;
             while (stack.length) {
               const node = /** @type {any} */ (stack.pop());
               if (!node || !(node instanceof Element)) continue;
+              if (hiddenPolicy(node) === 'skip') continue;
               try {
                 if (limitTag && String(node.tagName || '').toUpperCase() !== limitTag) {
                   // still traverse into children/shadow for performance? yes
-                } else {
-                  const cs = window.getComputedStyle(node);
-                  if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') {
-                    /* skip hidden */
-                  } else {
-                    const rect = /** @type {HTMLElement} */ (node).getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {
-                      const txt = normalize(node.textContent || '');
-                      if (txt) {
-                        if (txt.includes(query)) {
-                          el = /** @type {Element} */ (node);
-                          break;
-                        }
-                        const sc = dice(txt, query);
-                        if (sc > best.score)
-                          best = { el: /** @type {Element} */ (node), score: sc };
-                      }
+                } else if (hiddenPolicy(node) === 'all') {
+                  const txt = normalize(node.textContent || '');
+                  if (txt) {
+                    if (txt.includes(query)) {
+                      el = /** @type {Element} */ (node);
+                      break;
                     }
+                    const sc = dice(txt, query);
+                    if (sc > best.score) best = { el: /** @type {Element} */ (node), score: sc };
                   }
                 }
               } catch {}
@@ -1530,6 +1774,7 @@
               } catch {}
               if (++visited > 8000) break;
             }
+            endHiddenPass();
             if (!el && best.el && best.score >= 0.6) el = best.el;
           } else if (isXPath) {
             if (!sel) {

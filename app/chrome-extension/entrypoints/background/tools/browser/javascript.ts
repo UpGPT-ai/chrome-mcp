@@ -14,6 +14,8 @@
  */
 
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
+import { highRiskDisabledError, originFromUrl, wrapPageValue } from 'chrome-mcp-shared';
+import { readHighRiskFlags } from './high-risk';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
@@ -407,6 +409,9 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
     const startTime = performance.now();
 
     try {
+      const flags = await readHighRiskFlags();
+      if (!flags.javascript) return createErrorResponse(highRiskDisabledError('javascript'));
+
       // Validate required parameter
       const code = typeof args?.code === 'string' ? args.code.trim() : '';
       if (!code) {
@@ -437,8 +442,9 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
       // Try CDP execution first
       const cdpResult = await executeViaCdp(tabId, code, options);
 
+      const pageOrigin = originFromUrl(tab.url);
       if (cdpResult.ok) {
-        return this.buildSuccessResponse(tabId, cdpResult, startTime);
+        return this.buildSuccessResponse(tabId, cdpResult, startTime, undefined, pageOrigin);
       }
 
       // If not a debugger conflict, return the CDP error
@@ -454,7 +460,7 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
       const scriptingResult = await executeViaScripting(tabId, code, options);
 
       if (scriptingResult.ok) {
-        return this.buildSuccessResponse(tabId, scriptingResult, startTime, warnings);
+        return this.buildSuccessResponse(tabId, scriptingResult, startTime, warnings, pageOrigin);
       }
 
       return this.buildErrorResponse(tabId, scriptingResult, startTime, warnings);
@@ -482,12 +488,13 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
     result: ExecutionSuccess,
     startTime: number,
     warnings?: string[],
+    origin?: string,
   ): ToolResult {
     const payload: JavaScriptToolResult = {
       success: true,
       tabId,
       engine: result.engine,
-      result: result.output,
+      result: wrapPageValue(origin, result.output),
       truncated: result.truncated || undefined,
       redacted: result.redacted || undefined,
       warnings: warnings?.length ? warnings : undefined,

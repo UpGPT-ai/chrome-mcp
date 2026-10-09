@@ -1,6 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, policyOrigin, sealNetworkBodies } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 
 const DEFAULT_NETWORK_REQUEST_TIMEOUT = 30000; // For sending a single request via content script
@@ -64,11 +64,12 @@ class NetworkRequestTool extends BaseBrowserToolExecutor {
 
       console.log(`NetworkRequestTool: Response from content script:`, resultFromContentScript);
 
+      const sealed = sealNetworkBodies(resultFromContentScript, policyOrigin(url));
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(resultFromContentScript),
+            text: JSON.stringify(sealed),
           },
         ],
         isError: !resultFromContentScript?.success,

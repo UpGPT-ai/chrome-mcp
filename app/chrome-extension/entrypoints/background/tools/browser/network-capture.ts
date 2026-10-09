@@ -1,6 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, sealNetworkBodies } from 'chrome-mcp-shared';
 import { networkCaptureStartTool, networkCaptureStopTool } from './network-capture-web-request';
 import { networkDebuggerStartTool, networkDebuggerStopTool } from './network-capture-debugger';
 
@@ -23,9 +23,21 @@ function getFirstText(result: ToolResult): string | undefined {
   return first && first.type === 'text' ? first.text : undefined;
 }
 
-/**
- * Decorate JSON result with additional fields
- */
+/** Response and request bodies are page-derived. Other capture fields stay structured. */
+function sealCaptureBodies(result: ToolResult): ToolResult {
+  const text = getFirstText(result);
+  if (typeof text !== 'string') return result;
+  try {
+    const sealed = sealNetworkBodies(JSON.parse(text));
+    return {
+      ...result,
+      content: [{ type: 'text', text: JSON.stringify(sealed) }],
+    };
+  } catch {
+    return result;
+  }
+}
+
 function decorateJsonResult(result: ToolResult, extra: Record<string, unknown>): ToolResult {
   const text = getFirstText(result);
   if (typeof text !== 'string') return result;
@@ -146,7 +158,7 @@ class NetworkCaptureTool extends BaseBrowserToolExecutor {
 
     const delegateStop =
       backendToStop === 'debugger' ? networkDebuggerStopTool : networkCaptureStopTool;
-    const result = await delegateStop.execute();
+    const result = sealCaptureBodies(await delegateStop.execute());
 
     return decorateJsonResult(result, {
       backend: backendToStop,

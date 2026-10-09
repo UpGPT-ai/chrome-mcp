@@ -11,6 +11,7 @@ import {
   type ParsedCookieArgs,
 } from 'chrome-mcp-shared';
 import { readHighRiskFlags } from './high-risk';
+import { noteReturnedSecret } from './agent-guard';
 
 /**
  * chrome_cookies — get, set, delete, or list cookies for a url or domain.
@@ -67,11 +68,13 @@ class CookiesTool extends BaseBrowserToolExecutor {
       if (parsed.storeId) details.storeId = parsed.storeId;
       const cookie = await chrome.cookies.get(details);
       if (!cookie) throw new Error(`Cookie not found: ${parsed.name}`);
+      noteReturnedSecret(cookie.value);
       return { cookie: cookieForRead(cookieContentOrigin(cookie, parsed.url), cookie) };
     }
 
     const cookies = await chrome.cookies.getAll(this.filter(parsed));
     if (cookies.length === 0) throw new Error(`Cookie not found: ${parsed.name}`);
+    for (const cookie of cookies) noteReturnedSecret(cookie.value);
     return {
       cookies: cookies.map((cookie) => cookieForRead(cookieContentOrigin(cookie), cookie)),
     };

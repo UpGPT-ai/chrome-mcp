@@ -172,7 +172,7 @@ describe('untrusted envelope and cookie redaction', () => {
 });
 
 describe('high-risk defaults', () => {
-  test('cookies, storage values, intercept, grant, clipboard, and recording stay off unless set to true', () => {
+  test('cookies, storage values, intercept, grant, clipboard, recording, and userscript stay off unless set to true', () => {
     expect(HIGH_RISK_DEFAULTS).toEqual({
       cookies: false,
       storageValues: false,
@@ -180,6 +180,9 @@ describe('high-risk defaults', () => {
       grantPermission: false,
       clipboard: false,
       recording: false,
+      javascript: true,
+      upload: true,
+      userscript: false,
     });
     expect(parseHighRiskFlags(undefined)).toEqual(HIGH_RISK_DEFAULTS);
     expect(
@@ -190,6 +193,9 @@ describe('high-risk defaults', () => {
         grantPermission: 'yes',
         clipboard: 1,
         recording: 1,
+        javascript: false,
+        upload: 'no',
+        userscript: 1,
       }),
     ).toEqual({
       cookies: true,
@@ -198,6 +204,9 @@ describe('high-risk defaults', () => {
       grantPermission: false,
       clipboard: false,
       recording: false,
+      javascript: false,
+      upload: true,
+      userscript: false,
     });
     expect(parseHighRiskFlags({ grantPermission: true, clipboard: true, recording: true })).toEqual(
       {
@@ -207,14 +216,21 @@ describe('high-risk defaults', () => {
         grantPermission: true,
         clipboard: true,
         recording: true,
+        javascript: true,
+        upload: true,
+        userscript: false,
       },
     );
+    expect(parseHighRiskFlags({ userscript: true }).userscript).toBe(true);
     expect(highRiskDisabledError('cookies')).toContain('highRiskTools.cookies');
     expect(highRiskDisabledError('storageValues')).toContain('Listing keys');
     expect(highRiskDisabledError('intercept')).toContain('chrome_intercept');
     expect(highRiskDisabledError('grantPermission')).toContain('highRiskTools.grantPermission');
     expect(highRiskDisabledError('clipboard')).toContain('highRiskTools.clipboard');
     expect(highRiskDisabledError('recording')).toContain('highRiskTools.recording');
+    expect(highRiskDisabledError('javascript')).toContain('highRiskTools.javascript');
+    expect(highRiskDisabledError('upload')).toContain('highRiskTools.upload');
+    expect(highRiskDisabledError('userscript')).toContain('highRiskTools.userscript');
   });
 });
 

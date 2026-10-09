@@ -13,6 +13,7 @@ import {
 } from 'chrome-mcp-shared';
 import { runWithDebugger } from '@/utils/cdp-run';
 import { readHighRiskFlags } from './high-risk';
+import { noteReturnedSecret } from './agent-guard';
 import { withAuditError, writeAudit } from './audit-log';
 
 /**
@@ -143,6 +144,7 @@ class ClipboardTool extends BaseBrowserToolExecutor {
 
       const auditError = await this.audit(origin, parsed.action, 'ok');
       if (parsed.action === 'read') {
+        noteReturnedSecret(ran.text);
         return ok({
           success: true,
           action: 'read',
