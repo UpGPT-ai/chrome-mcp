@@ -8,15 +8,16 @@ audit log.
 
 ### Reading the page
 
-| Tool                     | What it does                                                                 |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `chrome_read_page`       | Accessibility-tree view of the page's elements.                              |
-| `chrome_snapshot`        | Compact snapshot, one line per element: ref, role, name, value, state flags. |
-| `chrome_get_web_content` | Fetch the text/HTML content of a page.                                       |
-| `chrome_screenshot`      | Screenshot of the page or an element.                                        |
-| `chrome_computer`        | Mouse and keyboard control plus screenshots.                                 |
-| `chrome_console`         | Capture console output from a tab.                                           |
-| `chrome_wait_for`        | Wait until a page condition is met.                                          |
+| Tool                     | What it does                                                                                                                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chrome_read_page`       | Accessibility-tree view of the page's elements.                                                                                                                                                                |
+| `chrome_snapshot`        | Compact snapshot, one line per element: ref, role, name, value, state flags. Defaults to viewport + interactive, 6000-char budget, cursor for more, repeated rows collapsed, images as alt text and size only. |
+| `chrome_find`            | Targeted lookup by text, role or nearby ref; returns only matching elements with refs (cheapest way to answer "where is X?").                                                                                  |
+| `chrome_get_web_content` | Fetch the text/HTML content of a page.                                                                                                                                                                         |
+| `chrome_screenshot`      | Screenshot of the page or an element.                                                                                                                                                                          |
+| `chrome_computer`        | Mouse and keyboard control plus screenshots.                                                                                                                                                                   |
+| `chrome_console`         | Capture console output from a tab.                                                                                                                                                                             |
+| `chrome_wait_for`        | Wait until a page condition is met.                                                                                                                                                                            |
 
 ### Acting on the page
 
