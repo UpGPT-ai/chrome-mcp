@@ -309,8 +309,10 @@
     else if (rect && rect.width === 0 && rect.height === 0) reason = 'zero-size';
     else if (
       rect &&
-      (rect.right < -OFFSCREEN_PX ||
-        rect.bottom < -OFFSCREEN_PX ||
+      // Measure against the document, not the viewport: a scrolled page has
+      // legitimate content far above and left of the current viewport.
+      (rect.right + (view.scrollX || 0) < -OFFSCREEN_PX ||
+        rect.bottom + (view.scrollY || 0) < -OFFSCREEN_PX ||
         rect.left > view.innerWidth + OFFSCREEN_PX ||
         // Below the fold is normal on long pages. Only content placed beyond the
         // document's own scrollable extent counts as hidden.
