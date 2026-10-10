@@ -77,6 +77,14 @@ for the details and the known limits before using it on sensitive accounts.
 | ---------------------------------------- | --------------------------------------- | ----------------------------------- |
 | ![Side panel](docs/images/sidepanel.png) | ![Flow editor](docs/images/builder.png) | ![Options](docs/images/options.png) |
 
+| Flow editor with steps                       | Flow editor (light)                           |
+| -------------------------------------------- | --------------------------------------------- |
+| ![Flow steps](docs/images/builder-nodes.png) | ![Flow, light](docs/images/builder-light.png) |
+
+| Quick panel                                 | Web Editor                                |
+| ------------------------------------------- | ----------------------------------------- |
+| ![Quick panel](docs/images/quick-panel.png) | ![Web Editor](docs/images/web-editor.png) |
+
 ## What's different from upstream
 
 This project started from [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) (MIT) and has
