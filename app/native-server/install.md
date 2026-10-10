@@ -200,7 +200,7 @@ Troubleshooting
 │  ├─ Execute-permission problems (macOS/Linux)
 │  │  ├─ "Permission denied" error
 │  │  ├─ "Native host has exited" error
-│  │  └─ Run mcp-chrome-bridge fix-permissions
+│  │  └─ Run node native-server/dist/cli.js fix-permissions
 │  │
 │  └─ Try node native-server/dist/cli.js register --system
 │
@@ -234,7 +234,7 @@ If you run into problems during installation, try the following steps:
    **macOS/Linux**:
 
    **Description**:
-   - npm install usually preserves file permissions, but pnpm may not
+   - Unzipping with some tools drops the execute bit from the launcher scripts
    - You may encounter "Permission denied" or "Native host has exited" errors
    - The Chrome extension cannot start the native host process
 
@@ -243,7 +243,7 @@ If you run into problems during installation, try the following steps:
    a) **Use the built-in fix command (recommended)**:
 
    ```bash
-   mcp-chrome-bridge fix-permissions
+   node native-server/dist/cli.js fix-permissions
    ```
 
    b) **Run the diagnostic tool to auto-fix**:
@@ -255,15 +255,9 @@ If you run into problems during installation, try the following steps:
    c) **Set permissions manually**:
 
    ```bash
-   # Find the install path
-   npm list -g mcp-chrome-bridge
-   # Or, for pnpm
-   pnpm list -g mcp-chrome-bridge
-
-   # Set execute permissions (replace with the actual path)
-   chmod +x /path/to/node_modules/mcp-chrome-bridge/run_host.sh
-   chmod +x /path/to/node_modules/mcp-chrome-bridge/index.js
-   chmod +x /path/to/node_modules/mcp-chrome-bridge/cli.js
+   # From the unzipped package folder
+   chmod +x native-server/run_host.sh
+   chmod +x native-server/dist/cli.js
    ```
 
    **Windows**:
@@ -278,7 +272,7 @@ If you run into problems during installation, try the following steps:
    a) **Use the built-in fix command (recommended)**:
 
    ```cmd
-   mcp-chrome-bridge fix-permissions
+   node native-server/dist/cli.js fix-permissions
    ```
 
    b) **Run the diagnostic tool to auto-fix**:
@@ -290,8 +284,8 @@ If you run into problems during installation, try the following steps:
    c) **Check file attributes manually**:
 
    ```cmd
-   # Find the install path
-   npm list -g mcp-chrome-bridge
+   # doctor prints the install path and the host manifest location
+   node native-server/dist/cli.js doctor
 
    # Check file attributes (right-click -> Properties in File Explorer)
    # Make sure run_host.bat is not read-only
@@ -300,16 +294,11 @@ If you run into problems during installation, try the following steps:
    d) **Reinstall and force permissions**:
 
    ```bash
-   # Uninstall
-   npm uninstall -g mcp-chrome-bridge
-   # Or pnpm uninstall -g mcp-chrome-bridge
-
-   # Reinstall
-   npm install -g mcp-chrome-bridge
-   # Or pnpm install -g mcp-chrome-bridge
+   # Re-run the installer from the unzipped package folder
+   bash install.sh --yes
 
    # If problems persist, run the permission fix
-   mcp-chrome-bridge fix-permissions
+   node native-server/dist/cli.js fix-permissions
    ```
 
 4. On Windows, make sure registry access is not restricted
