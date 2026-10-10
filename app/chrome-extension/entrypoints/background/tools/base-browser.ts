@@ -52,8 +52,9 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
         console.warn(`Unexpected ping response in tab ${tabId}:`, response);
       }
     } catch (error) {
-      console.error(
-        `ping content script failed: ${error instanceof Error ? error.message : String(error)}`,
+      // Expected on first use of a tab: no listener yet, so we inject below.
+      console.debug(
+        `content script not active yet, injecting: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
