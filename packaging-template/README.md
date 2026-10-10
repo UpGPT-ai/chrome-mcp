@@ -86,8 +86,8 @@ file are identical everywhere.
 ## Step 0: Put the folder somewhere permanent
 
 Chrome loads the extension straight from this folder, so don't leave it in Downloads or a temp folder.
-**Avoid Dropbox / OneDrive / Google Drive / iCloud folders**: `npm install` writes ~20,000 small files
-that sync clients lock (EBUSY/EPERM errors) and upload.
+**Avoid Dropbox / OneDrive / Google Drive / iCloud folders**: sync clients can lock or rewrite files
+while Chrome is using them (EBUSY/EPERM errors).
 
 Windows "Extract All" often creates a doubled folder (`chrome-mcp-package\chrome-mcp-package\`). Use the
 **inner** one, the one that contains `install.cmd`, `native-server` and `chrome-extension`.
@@ -102,13 +102,14 @@ bash /path/to/chrome-mcp-package/install.sh
 ```
 
 Either installer works from wherever the folder is. It checks Node.js, refuses to continue if the
-conflicting public package is installed, runs `npm install`, checks the native SQLite module built,
-registers with Chrome, confirms the registration allows this build's extension ID, and runs a
+conflicting public package is installed, registers with Chrome, confirms the registration allows this build's extension ID, and runs a
 self-check. It ends with **`Native host installed and registered.`** and prints the folder to use in
 Step 2.
 
-Expected, harmless output during `npm install`: `npm warn deprecated …`, `1 high severity
-vulnerability`, and `npm warn allow-scripts … better-sqlite3`. None of these are failures.
+**No `npm install` and no compiler are needed.** The native server ships as a self-contained bundle, so
+Node.js 20+ is the only prerequisite and the install works offline. Two features are unavailable in
+this build: persistent agent-chat storage (it needs a native SQLite module) and offline performance-trace
+analysis. Neither affects the browser tools.
 
 > **Windows, if Claude is doing the install for you:** double-click `install.cmd` yourself instead.
 > The Claude desktop app for Windows is a packaged (MSIX) app; commands Claude runs write the Chrome
@@ -175,8 +176,7 @@ must reconnect (`/mcp` in Claude Code) or start a new session. Prefer stdio.
 
 | Symptom                                                                                         | Fix                                                                                                                                                                                                                                                                                                                                         |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cd` says path not found / `npm` can't find `package.json`                                      | Wrong folder. Use the installer, which finds its own folder, and use the inner folder if extraction doubled it.                                                                                                                                                                                                                             |
-| Windows: `npm.ps1 cannot be loaded because running scripts is disabled`                         | PowerShell execution policy. Use `install.cmd`, or type `npm.cmd` instead of `npm`.                                                                                                                                                                                                                                                         |
+| `cd` says path not found / `node` can't find `cli.js`                                           | Wrong folder. Use the installer, which finds its own folder, and use the inner folder if extraction doubled it.                                                                                                                                                                                                                             |
 | Installer stops: _conflicting global package_                                                   | `npm uninstall -g mcp-chrome-bridge`, then re-run the installer.                                                                                                                                                                                                                                                                            |
 | `doctor`: _allowed_origins missing chrome-extension://gnkfbb…_                                  | Something (usually a global `mcp-chrome-bridge`) overwrote the registration. Uninstall it, re-run the installer, restart Chrome.                                                                                                                                                                                                            |
 | AI client shows `chrome-mcp` failed / no Chrome tools                                           | It started before Chrome on the HTTP config. Switch to the stdio config (Step 4), or reconnect (`/mcp` in Claude Code).                                                                                                                                                                                                                     |
@@ -188,19 +188,20 @@ must reconnect (`/mcp` in Claude Code) or start a new session. Prefer stdio.
 | Mac: `permission denied` running `run_host.sh` or `cli.js`                                      | Executable bits lost (some unzip tools drop them). `node native-server/dist/cli.js fix-permissions`, or just re-run `install.sh`.                                                                                                                                                                                                           |
 | Can't find the extension icon / "Connect" button                                                | It isn't pinned. Puzzle-piece icon → pin chrome-mcp (Step 2, item 5).                                                                                                                                                                                                                                                                       |
 | Tools still work after "closing" Chrome                                                         | Chrome is still running: an installed web app (e.g. Google Messages) or "Continue running background apps" keeps it alive. Close app windows too, then quit Chrome from the system tray / menu bar (Mac: ⌘Q). Check with the "Is Chrome really closed?" command above.                                                                      |
-| `better-sqlite3` build fails                                                                    | **Windows:** install Visual Studio Build Tools with "Desktop development with C++". **Mac:** `xcode-select --install`. **Linux:** `build-essential` and `python3`. Then re-run the installer.                                                                                                                                               |
-| EBUSY / EPERM during npm install                                                                | The folder is in a synced location. See Step 0.                                                                                                                                                                                                                                                                                             |
+| EBUSY / EPERM during install                                                                    | The folder is in a synced location. See Step 0.                                                                                                                                                                                                                                                                                             |
 
 Anything else: send a screenshot of the error plus the output of `node native-server/dist/cli.js doctor`
 to Greg.
 
 ## What's in the package
 
-| Path                         | Purpose                                                                              |
-| ---------------------------- | ------------------------------------------------------------------------------------ |
-| `README.md`                  | This guide (the only one).                                                           |
-| `install.cmd`, `install.ps1` | Windows installer.                                                                   |
-| `install.sh`                 | macOS / Linux installer.                                                             |
-| `show-config.js`             | Prints the MCP client config for this machine (any OS). `--json` for tools.          |
-| `chrome-extension/`          | The extension to Load unpacked.                                                      |
-| `native-server/`             | The native host + stdio proxy (`dist/`); `npm install` creates `node_modules/` here. |
+| Path                         | Purpose                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `README.md`                  | This guide.                                                                 |
+| `install.cmd`, `install.ps1` | Windows installer.                                                          |
+| `install.sh`                 | macOS / Linux installer.                                                    |
+| `show-config.js`             | Prints the MCP client config for this machine (any OS). `--json` for tools. |
+| `chrome-extension/`          | The extension to Load unpacked.                                             |
+| `native-server/`             | The native host + stdio proxy (`dist/`), fully bundled; no `node_modules/`. |
+| `WINDOWS-TESTING.md`         | Short test script for Windows testers.                                      |
+| `CAPABILITIES.md`            | Every tool and feature, and which are off by default.                       |

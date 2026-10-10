@@ -50,30 +50,35 @@ npm run build
 
 ### Registering the Native Messaging Host
 
+From a source checkout, run these from `app/native-server` after `npm run build`.
+
 #### Automatically detect and register all installed browsers
 
 ```bash
-mcp-chrome-bridge register --detect
+node dist/cli.js register --detect
 ```
 
 #### Register a specific browser
 
 ```bash
 # Register Chrome only
-mcp-chrome-bridge register --browser chrome
+node dist/cli.js register --browser chrome
 
 # Register Chromium only
-mcp-chrome-bridge register --browser chromium
+node dist/cli.js register --browser chromium
 
 # Register all supported browsers
-mcp-chrome-bridge register --browser all
+node dist/cli.js register --browser all
 ```
 
-#### Global install (automatically registers detected browsers)
+#### Release package (recommended)
 
-```bash
-npm i -g mcp-chrome-bridge
-```
+Use the installer in the chrome-mcp release zip (`install.sh` or `install.cmd`). It needs only
+Node.js 20+: the server is a self-contained bundle with no `npm install` step. Run the commands
+above as `node native-server/dist/cli.js ...` from the unzipped package folder.
+
+> Do not run `npm install -g mcp-chrome-bridge`. That installs the public upstream build, whose
+> setup script re-registers the host with the public extension ID and breaks this build.
 
 #### Browser support
 
