@@ -4,7 +4,8 @@ import { TOOL_NAMES, evaluateSitePolicy, policyOrigin, wrapUntrusted } from 'chr
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { readSitePolicySettings } from './high-risk';
 
-const MAX_TABS = 40;
+const DEFAULT_MAX_TABS = 150;
+const HARD_MAX_TABS = 300;
 const CONCURRENCY = 4;
 const ATTEMPTS = 3;
 const ACTIVATE_SETTLE_MS = 250;
@@ -21,6 +22,7 @@ interface SearchArgs {
   windowId?: unknown;
   currentWindowOnly?: unknown;
   activateUnreadable?: unknown;
+  maxTabs?: unknown;
 }
 
 interface Hit {
@@ -120,7 +122,11 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
       }
       candidates.push(tab);
     }
-    const searched = candidates.slice(0, MAX_TABS);
+    const maxTabs = Math.min(
+      HARD_MAX_TABS,
+      Math.max(1, typeof args.maxTabs === 'number' ? Math.floor(args.maxTabs) : DEFAULT_MAX_TABS),
+    );
+    const searched = candidates.slice(0, maxTabs);
     const truncated = candidates.length > searched.length;
 
     const reasons = new Map<string, number>();

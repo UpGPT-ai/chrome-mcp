@@ -1102,6 +1102,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Only search tabs in this window id.',
         },
+        maxTabs: {
+          type: 'number',
+          description: 'Maximum number of tabs to read. Default 150, max 300.',
+        },
         activateUnreadable: {
           type: 'boolean',
           description:
