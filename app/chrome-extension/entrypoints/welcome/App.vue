@@ -2,391 +2,227 @@
 import { ref } from 'vue';
 import { LINKS, NATIVE_HOST } from '@/common/constants';
 
-import '../sidepanel/styles/agent-chat.css';
-
 const COMMANDS = {
-  npmInstall: 'npm install -g mcp-chrome-bridge',
-  pnpmInstall: 'pnpm add -g mcp-chrome-bridge',
-  yarnInstall: 'yarn global add mcp-chrome-bridge',
+  mac: 'bash install.sh --yes',
+  windows: 'install.cmd  (double-click it)',
+  showConfig: 'node show-config.js',
+  doctor: 'node native-server/dist/cli.js doctor',
   mcpUrl: 'http://127.0.0.1:' + NATIVE_HOST.DEFAULT_PORT + '/mcp',
-  doctor: 'mcp-chrome-bridge doctor',
-  fix: 'mcp-chrome-bridge doctor --fix',
-  report: 'mcp-chrome-bridge report --copy',
 } as const;
 
 type CommandKey = keyof typeof COMMANDS;
-
 const copiedKey = ref<CommandKey | null>(null);
 
-const ALT_INSTALL = [
-  { label: 'pnpm', key: 'pnpmInstall' },
-  { label: 'yarn', key: 'yarnInstall' },
-] as const satisfies ReadonlyArray<{ label: string; key: CommandKey }>;
-
-const DIAGNOSTICS = [
-  { label: 'Doctor', key: 'doctor' },
-  { label: 'Auto-fix', key: 'fix' },
-] as const satisfies ReadonlyArray<{ label: string; key: CommandKey }>;
-
-function copyLabel(key: CommandKey): string {
-  return copiedKey.value === key ? 'Copied' : 'Copy';
-}
-
-function copyColor(key: CommandKey): string {
-  return copiedKey.value === key ? 'var(--ac-success)' : 'var(--ac-text-muted)';
-}
-
-async function copyCommand(key: CommandKey): Promise<void> {
+async function copy(key: CommandKey): Promise<void> {
   try {
     await navigator.clipboard.writeText(COMMANDS[key]);
     copiedKey.value = key;
     window.setTimeout(() => {
       if (copiedKey.value === key) copiedKey.value = null;
     }, 2000);
-  } catch (err) {
-    console.error('Failed to copy:', err);
+  } catch {
     copiedKey.value = null;
   }
 }
 
-async function openDocs(): Promise<void> {
+async function open(url: string): Promise<void> {
   try {
-    await chrome.tabs.create({ url: LINKS.TROUBLESHOOTING });
+    await chrome.tabs.create({ url });
   } catch {
-    window.open(LINKS.TROUBLESHOOTING, '_blank', 'noopener,noreferrer');
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 }
 </script>
 
 <template>
-  <div class="agent-theme welcome-root">
-    <div class="min-h-screen flex flex-col">
-      <header class="welcome-header flex-none px-6 py-5">
-        <div class="max-w-3xl mx-auto flex items-center justify-between gap-4">
-          <div class="flex items-center gap-3 min-w-0">
-            <div
-              class="welcome-icon w-10 h-10 flex items-center justify-center flex-shrink-0"
-              aria-hidden="true"
-            >
-              <svg
-                class="w-6 h-6"
-                :style="{ color: 'var(--ac-accent)' }"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
-            </div>
-            <div class="min-w-0">
-              <h1 class="welcome-title text-lg font-medium tracking-tight truncate">
-                Chrome MCP from UpGPT.ai
-              </h1>
-              <p class="welcome-muted text-sm truncate">
-                After the extension is installed, this is the only required step.
-              </p>
-            </div>
-          </div>
+  <div class="cm-root">
+    <header class="cm-head">
+      <img class="cm-logo" src="/icon/128.png" alt="" width="40" height="40" />
+      <div>
+        <h1>Chrome MCP from UpGPT.ai</h1>
+        <p class="cm-muted"
+          >The extension is installed. It works on its own; connecting an AI client is optional.</p
+        >
+      </div>
+    </header>
 
-          <button
-            class="welcome-button px-3 py-2 text-xs font-medium ac-btn flex-shrink-0"
-            @click="openDocs"
+    <main class="cm-main">
+      <section class="cm-card">
+        <h2>Use it right now. Nothing else to install.</h2>
+        <p class="cm-muted">
+          Pin Chrome MCP to the toolbar and open it. These work with the extension alone:
+        </p>
+        <ul class="cm-list">
+          <li
+            ><b>Record and replay flows.</b> Turn on “Recording and flows” in the popup, record your
+            clicks and typing, replay them any time.</li
           >
-            Troubleshooting Docs
-          </button>
+          <li
+            ><b>Web Editor.</b> Press <kbd>Ctrl/⌘ + Shift + O</kbd> on any page to edit it
+            visually.</li
+          >
+          <li
+            ><b>Everything stays on your machine.</b> Nothing is sent anywhere unless you connect a
+            client.</li
+          >
+        </ul>
+      </section>
+
+      <section class="cm-card cm-optional">
+        <h2>Optional add-on: let your AI assistant drive Chrome</h2>
+        <p class="cm-muted">
+          Adds a small local program so Claude, Cursor and other MCP clients can read tabs, click
+          and fill forms in your real Chrome. Needs Node.js 20+. Skip it if you only want the
+          features above.
+        </p>
+        <div class="cm-row">
+          <span class="cm-label">macOS / Linux</span><code>{{ COMMANDS.mac }}</code>
+          <button @click="copy('mac')">{{ copiedKey === 'mac' ? 'Copied' : 'Copy' }}</button>
         </div>
-      </header>
-
-      <main class="flex-1 px-6 py-8">
-        <div class="max-w-3xl mx-auto space-y-6">
-          <section class="welcome-card welcome-card--primary p-6">
-            <h2 class="welcome-title text-xl font-medium">
-              Install <code class="welcome-code">mcp-chrome-bridge</code>
-            </h2>
-            <p class="welcome-muted text-sm mt-2">
-              The Chrome extension uses this local bridge to expose MCP tools to your client.
-            </p>
-
-            <div class="mt-4 space-y-3">
-              <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
-                <code class="welcome-code text-sm break-all">{{ COMMANDS.npmInstall }}</code>
-                <button
-                  class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                  :style="{ color: copyColor('npmInstall') }"
-                  @click="copyCommand('npmInstall')"
-                >
-                  {{ copyLabel('npmInstall') }}
-                </button>
-              </div>
-
-              <div class="grid sm:grid-cols-2 gap-3">
-                <div
-                  v-for="item in ALT_INSTALL"
-                  :key="item.key"
-                  class="welcome-alt-row flex items-center justify-between gap-3 px-4 py-3"
-                >
-                  <div class="min-w-0">
-                    <div
-                      class="welcome-mono welcome-subtle text-[10px] uppercase tracking-widest font-medium"
-                    >
-                      {{ item.label }}
-                    </div>
-                    <code class="welcome-code text-xs break-all">{{ COMMANDS[item.key] }}</code>
-                  </div>
-                  <button
-                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                    :style="{ color: copyColor(item.key) }"
-                    @click="copyCommand(item.key)"
-                  >
-                    {{ copyLabel(item.key) }}
-                  </button>
-                </div>
-              </div>
-
-              <div class="welcome-alt-row welcome-muted px-4 py-3 text-xs">
-                Requires Node.js 20+. Check your version with
-                <code class="welcome-code welcome-code-inline px-1 py-0.5">node -v</code>.
-              </div>
-            </div>
-
-            <div
-              class="mt-6 pt-5"
-              :style="{ borderTop: 'var(--ac-border-width) solid var(--ac-border)' }"
-            >
-              <h3 class="welcome-title text-sm font-medium">MCP client URL (streamable HTTP)</h3>
-              <p class="welcome-muted text-sm mt-1">
-                Use this URL in your MCP client (e.g., Claude Desktop, CherryStudio).
-              </p>
-
-              <div
-                class="welcome-command-row mt-3 flex items-center justify-between gap-3 px-4 py-3"
-              >
-                <code class="welcome-code text-sm break-all">{{ COMMANDS.mcpUrl }}</code>
-                <button
-                  class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                  :style="{ color: copyColor('mcpUrl') }"
-                  @click="copyCommand('mcpUrl')"
-                >
-                  {{ copyLabel('mcpUrl') }}
-                </button>
-              </div>
-
-              <p class="welcome-subtle text-xs mt-3">
-                The bridge now requires a bearer token. Add the header
-                <code
-                  >Authorization: Bearer &lt;contents of ~/.chrome-mcp-agent/auth-token&gt;</code
-                >
-                to your MCP client config.
-              </p>
-
-              <p class="welcome-subtle text-xs mt-3">
-                Tip: You can also open the extension popup and click "Connect" to copy a full client
-                config snippet.
-              </p>
-            </div>
-          </section>
-
-          <details class="welcome-card overflow-hidden">
-            <summary
-              class="px-6 py-4 cursor-pointer select-none flex items-center justify-between gap-4"
-            >
-              <div class="min-w-0">
-                <div class="welcome-title text-sm font-medium">Troubleshooting</div>
-                <div class="welcome-muted text-xs truncate">
-                  Use these only if the bridge fails to register or connect.
-                </div>
-              </div>
-              <span class="welcome-mono welcome-subtle text-xs flex-shrink-0">doctor · report</span>
-            </summary>
-
-            <div class="px-6 pb-6 space-y-4">
-              <div class="welcome-alt-row p-4">
-                <div class="text-sm font-medium">Diagnostics</div>
-                <p class="welcome-muted text-sm mt-1">
-                  Run <code class="welcome-code">doctor</code> to check installation status. If it
-                  reports an error, run the auto-fix command.
-                </p>
-
-                <div class="mt-3 space-y-2">
-                  <div
-                    v-for="item in DIAGNOSTICS"
-                    :key="item.key"
-                    class="welcome-command-row flex items-center justify-between gap-3 px-3 py-2"
-                  >
-                    <div class="min-w-0">
-                      <div
-                        class="welcome-mono welcome-subtle text-[10px] uppercase tracking-widest font-medium"
-                      >
-                        {{ item.label }}
-                      </div>
-                      <code class="welcome-code text-xs break-all">{{ COMMANDS[item.key] }}</code>
-                    </div>
-                    <button
-                      class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                      :style="{ color: copyColor(item.key) }"
-                      @click="copyCommand(item.key)"
-                    >
-                      {{ copyLabel(item.key) }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="welcome-report-card p-4">
-                <div class="text-sm font-medium" :style="{ color: 'var(--ac-danger)' }">
-                  Report an issue
-                </div>
-                <p class="welcome-muted text-sm mt-1">
-                  Generate a diagnostic report and paste it into a GitHub issue.
-                </p>
-
-                <div
-                  class="welcome-command-row mt-3 flex items-center justify-between gap-3 px-3 py-2"
-                >
-                  <code class="welcome-code text-xs break-all">{{ COMMANDS.report }}</code>
-                  <button
-                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                    :style="{ color: copyColor('report') }"
-                    @click="copyCommand('report')"
-                  >
-                    {{ copyLabel('report') }}
-                  </button>
-                </div>
-
-                <p class="welcome-subtle text-xs mt-2">
-                  This copies the report to your clipboard (sensitive info is automatically
-                  redacted).
-                </p>
-              </div>
-
-              <div class="flex">
-                <button
-                  class="welcome-button px-3 py-2 text-xs font-medium ac-btn"
-                  @click="openDocs"
-                >
-                  Open troubleshooting docs
-                </button>
-              </div>
-            </div>
-          </details>
+        <div class="cm-row">
+          <span class="cm-label">Windows</span><code>{{ COMMANDS.windows }}</code>
         </div>
-      </main>
-    </div>
+        <p class="cm-muted">
+          Run it from the unzipped package folder, then run
+          <code>{{ COMMANDS.showConfig }}</code> for your client's config, and click
+          <b>Connect</b> in the popup. High-risk tools (cookies, storage, network intercept,
+          clipboard) stay off until you enable them.
+        </p>
+        <p class="cm-note">
+          Do not run <code>npm install -g mcp-chrome-bridge</code>. That is the upstream project; it
+          replaces this registration and the connection stops working after Chrome restarts.
+        </p>
+      </section>
+
+      <section class="cm-card">
+        <h2>Something not working?</h2>
+        <div class="cm-row">
+          <code>{{ COMMANDS.doctor }}</code>
+          <button @click="copy('doctor')">{{ copiedKey === 'doctor' ? 'Copied' : 'Copy' }}</button>
+        </div>
+        <p class="cm-links">
+          <a href="#" @click.prevent="open(LINKS.INSTALL)">Install guide</a>
+          <a href="#" @click.prevent="open(LINKS.TROUBLESHOOTING)">Troubleshooting</a>
+          <a href="#" @click.prevent="open(LINKS.TOOLS)">All tools</a>
+          <a href="#" @click.prevent="open(LINKS.SECURITY)">Security</a>
+          <a href="#" @click.prevent="open(LINKS.REPO)">GitHub</a>
+        </p>
+      </section>
+    </main>
   </div>
 </template>
 
 <style scoped>
-.welcome-root {
-  min-height: 100%;
-  background: var(--ac-bg);
-  background-image: var(--ac-bg-pattern);
-  background-size: var(--ac-bg-pattern-size);
-  color: var(--ac-text);
-  font-family: var(--ac-font-body);
+.cm-root {
+  min-height: 100vh;
+  background: var(--cm-bg);
+  color: var(--cm-text);
+  font-family: var(--cm-font);
 }
-
-.welcome-header {
-  background: var(--ac-header-bg);
-  border-bottom: var(--ac-border-width) solid var(--ac-header-border);
-  backdrop-filter: blur(8px);
+.cm-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--cm-border);
+  background: var(--cm-surface);
 }
-
-.welcome-card {
-  background: var(--ac-surface);
-  border: var(--ac-border-width) solid var(--ac-border);
-  border-radius: var(--ac-radius-card);
-  box-shadow: var(--ac-shadow-card);
+.cm-logo {
+  border-radius: 10px;
 }
-
-.welcome-card--primary {
-  box-shadow: var(--ac-shadow-float);
+h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
 }
-
-.welcome-icon {
-  background: var(--ac-surface);
-  border: var(--ac-border-width) solid var(--ac-border);
-  border-radius: var(--ac-radius-card);
-  box-shadow: var(--ac-shadow-card);
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px;
 }
-
-.welcome-title {
-  font-family: var(--ac-font-heading);
-  color: var(--ac-text);
+.cm-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
 }
-
-.welcome-muted {
-  color: var(--ac-text-muted);
+.cm-card {
+  background: var(--cm-surface);
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius);
+  padding: 18px 20px;
 }
-
-.welcome-subtle {
-  color: var(--ac-text-subtle);
+.cm-muted {
+  color: var(--cm-text-muted);
+  font-size: 13px;
+  margin: 4px 0 10px;
 }
-
-.welcome-mono {
-  font-family: var(--ac-font-mono);
+.cm-note {
+  font-size: 12px;
+  color: var(--cm-warn);
+  margin: 10px 0 0;
 }
-
-.welcome-code {
-  font-family: var(--ac-font-code);
+.cm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--cm-bg);
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 8px;
 }
-
-.welcome-button {
-  font-family: var(--ac-font-mono);
-  color: var(--ac-text-muted);
-  background: var(--ac-surface);
-  border: var(--ac-border-width) solid var(--ac-border);
-  border-radius: var(--ac-radius-button);
+.cm-row code {
+  flex: 1;
+  word-break: break-all;
+}
+.cm-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cm-text-muted);
+  min-width: 96px;
+}
+code {
+  font-family: var(--cm-mono);
+  font-size: 12.5px;
+}
+button {
+  background: var(--cm-accent);
+  color: var(--cm-accent-contrast);
+  border: 0;
+  border-radius: var(--cm-radius-sm);
+  padding: 5px 12px;
+  font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
-
-.welcome-button:hover {
-  background: var(--ac-hover-bg-subtle);
+.cm-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 10px 0 0;
+  font-size: 13px;
 }
-
-.welcome-command-row {
-  background: var(--ac-code-bg);
-  border: var(--ac-border-width) solid var(--ac-code-border);
-  border-radius: var(--ac-radius-inner);
+a {
+  color: var(--cm-accent);
 }
-
-.welcome-alt-row {
-  background: var(--ac-surface-muted);
-  border: var(--ac-border-width) solid var(--ac-border);
-  border-radius: var(--ac-radius-inner);
+.cm-list {
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
+  font-size: 13.5px;
+  line-height: 1.7;
 }
-
-.welcome-report-card {
-  background: var(--ac-diff-del-bg);
-  border: var(--ac-border-width) solid var(--ac-diff-del-border);
-  border-radius: var(--ac-radius-inner);
+kbd {
+  font-family: var(--cm-mono);
+  font-size: 12px;
+  background: var(--cm-bg);
+  border: 1px solid var(--cm-border);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
-
-.welcome-code-inline {
-  background: var(--ac-hover-bg-subtle);
-  border: var(--ac-border-width) solid var(--ac-border);
-  border-radius: 6px;
-}
-
-.ac-btn {
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.ac-btn:hover {
-  opacity: 0.8;
-}
-
-summary {
-  list-style: none;
-}
-
-summary::-webkit-details-marker {
-  display: none;
+.cm-optional {
+  border-style: dashed;
 }
 </style>

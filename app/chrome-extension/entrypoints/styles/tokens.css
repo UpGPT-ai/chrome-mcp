@@ -1,11 +1,12 @@
+/* UpGPT brand: blue #3B82F6, slate #0F172A/#1E293B/#334155/#94A3B8 (docs/business/brand/up-brand-guide.md in VISION). */
 /* One set of design tokens for every extension window (popup, side panel, builder, welcome). */
 :root {
   --cm-bg: #ffffff;
-  --cm-surface: #f6f7f9;
-  --cm-border: #dfe2e8;
-  --cm-text: #14171f;
-  --cm-text-muted: #5a6272;
-  --cm-accent: #0b6bcb;
+  --cm-surface: #f1f5f9;
+  --cm-border: #e2e8f0;
+  --cm-text: #0f172a;
+  --cm-text-muted: #475569;
+  --cm-accent: #3b82f6;
   --cm-accent-contrast: #ffffff;
   --cm-ok: #12805c;
   --cm-warn: #b25e09;
@@ -13,18 +14,19 @@
   --cm-radius: 8px;
   --cm-radius-sm: 5px;
   --cm-font:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
   --cm-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --cm-bg: #14171f;
-    --cm-surface: #1c212c;
-    --cm-border: #2e3544;
-    --cm-text: #eceff4;
-    --cm-text-muted: #9aa3b5;
-    --cm-accent: #5aa7f5;
+    --cm-bg: #0f172a;
+    --cm-surface: #1e293b;
+    --cm-border: #334155;
+    --cm-text: #f1f5f9;
+    --cm-text-muted: #94a3b8;
+    --cm-accent: #60a5fa;
     --cm-accent-contrast: #0a1018;
     --cm-ok: #4cc79b;
     --cm-warn: #f0a24b;
@@ -35,11 +37,11 @@
 /* Explicit per-window theme switch (builder toggle); mirrors the media query above. */
 [data-theme='light'] {
   --cm-bg: #ffffff;
-  --cm-surface: #f6f7f9;
-  --cm-border: #dfe2e8;
-  --cm-text: #14171f;
-  --cm-text-muted: #5a6272;
-  --cm-accent: #0b6bcb;
+  --cm-surface: #f1f5f9;
+  --cm-border: #e2e8f0;
+  --cm-text: #0f172a;
+  --cm-text-muted: #475569;
+  --cm-accent: #3b82f6;
   --cm-accent-contrast: #ffffff;
   --cm-ok: #12805c;
   --cm-warn: #b25e09;
@@ -47,12 +49,12 @@
 }
 
 [data-theme='dark'] {
-  --cm-bg: #14171f;
-  --cm-surface: #1c212c;
-  --cm-border: #2e3544;
-  --cm-text: #eceff4;
-  --cm-text-muted: #9aa3b5;
-  --cm-accent: #5aa7f5;
+  --cm-bg: #0f172a;
+  --cm-surface: #1e293b;
+  --cm-border: #334155;
+  --cm-text: #f1f5f9;
+  --cm-text-muted: #94a3b8;
+  --cm-accent: #60a5fa;
   --cm-accent-contrast: #0a1018;
   --cm-ok: #4cc79b;
   --cm-warn: #f0a24b;
