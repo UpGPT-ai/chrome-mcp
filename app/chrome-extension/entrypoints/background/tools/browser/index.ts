@@ -15,7 +15,7 @@ export {
   updateTabGroupTool,
   listTabGroupsTool,
 } from './tabs-manage';
-export { vectorSearchTabsContentTool as searchTabsContentTool } from './vector-search';
+export { searchTabsContentTool } from './tab-text-search';
 export { screenshotTool } from './screenshot';
 export { webFetcherTool, getInteractiveElementsTool } from './web-fetcher';
 export { clickTool, fillTool } from './interaction';

@@ -40,7 +40,7 @@ audit log.
 
 `chrome_navigate`, `chrome_switch_tab`, `chrome_close_tabs`, `chrome_move_tabs`, `chrome_update_tab`,
 `chrome_discard_tabs`, `chrome_duplicate_tab`, `chrome_reload_tabs`, `chrome_query_tabs`,
-`get_windows_and_tabs`, `chrome_create_window`, `chrome_update_window`, `chrome_close_window`.
+`get_windows_and_tabs`, `search_tabs_content` (keyword search across open tabs' text, on demand, nothing stored), `chrome_create_window`, `chrome_update_window`, `chrome_close_window`.
 
 Tab groups: `chrome_group_tabs`, `chrome_ungroup_tabs`, `chrome_update_tab_group`, `chrome_list_tab_groups`.
 
@@ -75,11 +75,6 @@ dry-run unless confirmed. Gated by the `allowAuthTools` policy.
 ### Housekeeping
 
 `chrome_audit_log` (read the last N audit entries), `chrome_reload_extension`.
-
-### Not exposed
-
-`chrome_inject_script`, `chrome_send_command_to_inject_script`, `chrome_userscript` and
-`search_tabs_content` are disabled and not offered to clients.
 
 ## High-risk tools
 

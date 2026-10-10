@@ -1079,21 +1079,33 @@ export const TOOL_SCHEMAS: Tool[] = [
       required: [],
     },
   },
-  // {
-  //   name: TOOL_NAMES.BROWSER.SEARCH_TABS_CONTENT,
-  //   description:
-  //     'search for related content from the currently open tab and return the corresponding web pages.',
-  //   inputSchema: {
-  //     type: 'object',
-  //     properties: {
-  //       query: {
-  //         type: 'string',
-  //         description: 'the query to search for related content.',
-  //       },
-  //     },
-  //     required: ['query'],
-  //   },
-  // },
+  {
+    name: TOOL_NAMES.BROWSER.SEARCH_TABS_CONTENT,
+    description:
+      'Keyword search across the text of your open tabs. Reads each tab on demand (nothing is indexed or stored) and returns the best matches with tabId, url, title and short snippets. Use it to find which open tab mentions something, then switch to it or read it. Tabs denied by site policy and sleeping tabs are skipped and counted.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Words or phrase to look for. Matching is case-insensitive.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum tabs to return. Default 8, max 25.',
+        },
+        currentWindowOnly: {
+          type: 'boolean',
+          description: 'Only search tabs in the current window. Default false.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Only search tabs in this window id.',
+        },
+      },
+      required: ['query'],
+    },
+  },
   // {
   //   name: TOOL_NAMES.BROWSER.INJECT_SCRIPT,
   //   description:
