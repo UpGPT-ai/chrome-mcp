@@ -5,6 +5,9 @@ import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { readSitePolicySettings } from './high-risk';
 
 const MAX_TABS = 40;
+const CONCURRENCY = 4;
+const ATTEMPTS = 3;
+const RETRY_DELAY_MS = 400;
 const MAX_TEXT_CHARS = 300_000;
 const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 25;
@@ -125,52 +128,63 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
       reasons.set(key, (reasons.get(key) ?? 0) + 1);
     };
 
+    const failedTabs: string[] = [];
     const phrase = query.toLowerCase();
     const hits: Hit[] = [];
-    await Promise.all(
-      searched.map(async (tab) => {
-        const tabId = tab.id as number;
-        try {
-          await this.injectContentScript(tabId, ['inject-scripts/web-fetcher-helper.js']);
-          const response = await this.sendMessageToTab(tabId, {
-            action: TOOL_MESSAGE_TYPES.WEB_FETCHER_GET_TEXT_CONTENT,
-          });
-          if (!response?.success || typeof response.textContent !== 'string') {
-            failedReads += 1;
-            noteReason(String(response?.error || 'no text returned'));
-            return;
-          }
-          const text: string = response.textContent.slice(0, MAX_TEXT_CHARS);
-          const lower = text.toLowerCase();
-          const title = (tab.title || '').toLowerCase();
-
-          let score = 0;
-          let matched = 0;
-          for (const term of terms) {
-            const inBody = countOccurrences(lower, term);
-            const inTitle = title.includes(term) ? 1 : 0;
-            if (inBody > 0 || inTitle > 0) matched += 1;
-            score += Math.log2(1 + inBody) + inTitle * 4;
-          }
-          if (matched === 0) return;
-          score *= matched / terms.length;
-          if (terms.length > 1 && lower.includes(phrase)) score += 5;
-
-          hits.push({
-            tabId,
-            windowId: tab.windowId,
-            url: tab.url as string,
-            title: tab.title || '',
-            score: Math.round(score * 100) / 100,
-            matchedTerms: matched,
-            snippets: buildSnippets(text, lower, terms),
-          });
-        } catch (error) {
-          failedReads += 1;
-          noteReason(error instanceof Error ? error.message : String(error));
+    const readTab = async (tab: chrome.tabs.Tab, attempt = 1): Promise<void> => {
+      const tabId = tab.id as number;
+      try {
+        await this.injectContentScript(tabId, ['inject-scripts/web-fetcher-helper.js']);
+        const response = await this.sendMessageToTab(tabId, {
+          action: TOOL_MESSAGE_TYPES.WEB_FETCHER_GET_TEXT_CONTENT,
+        });
+        if (!response?.success || typeof response.textContent !== 'string') {
+          throw new Error(String(response?.error || 'no text returned'));
         }
-      }),
-    );
+        const text: string = response.textContent.slice(0, MAX_TEXT_CHARS);
+        const lower = text.toLowerCase();
+        const title = (tab.title || '').toLowerCase();
+
+        let score = 0;
+        let matched = 0;
+        for (const term of terms) {
+          const inBody = countOccurrences(lower, term);
+          const inTitle = title.includes(term) ? 1 : 0;
+          if (inBody > 0 || inTitle > 0) matched += 1;
+          score += Math.log2(1 + inBody) + inTitle * 4;
+        }
+        if (matched === 0) return;
+        score *= matched / terms.length;
+        if (terms.length > 1 && lower.includes(phrase)) score += 5;
+
+        hits.push({
+          tabId,
+          windowId: tab.windowId,
+          url: tab.url as string,
+          title: tab.title || '',
+          score: Math.round(score * 100) / 100,
+          matchedTerms: matched,
+          snippets: buildSnippets(text, lower, terms),
+        });
+      } catch (error) {
+        if (attempt < ATTEMPTS) {
+          // Background tabs Chrome has frozen often reject the first injection and
+          // accept the next one; give them a moment and try again.
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          return readTab(tab, attempt + 1);
+        }
+        failedReads += 1;
+        failedTabs.push(`${tabId} ${(tab.url || '').slice(0, 60)}`);
+        noteReason(error instanceof Error ? error.message : String(error));
+      }
+    };
+    // Bounded concurrency: injecting into dozens of tabs at once makes Chrome reject
+    // most of them with a misleading host-permission error.
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < searched.length) await readTab(searched[next++]);
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, searched.length) }, worker));
 
     hits.sort((a, b) => b.score - a.score);
     const results = hits.slice(0, limit).map((hit) => {
@@ -197,6 +211,7 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
             tabsSkippedByPolicy: skippedPolicy,
             tabsUnreadable: failedReads,
             tabsAsleep: sleeping,
+            unreadableTabs: failedTabs.slice(0, 50),
             unreadableReasons: Object.fromEntries(reasons),
             truncated,
             totalMatches: hits.length,
