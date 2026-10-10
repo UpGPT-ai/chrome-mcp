@@ -67,6 +67,16 @@ This is a single-user, local trust model. Read
 [docs/SECURITY-AND-CAPABILITIES.md](https://github.com/UpGPT-ai/chrome-mcp/blob/main/docs/SECURITY-AND-CAPABILITIES.md)
 for the details and the known limits before using it on sensitive accounts.
 
+## Screenshots
+
+| Welcome                                  | Popup (light)                          | Popup (dark)                               |
+| ---------------------------------------- | -------------------------------------- | ------------------------------------------ |
+| ![Welcome page](docs/images/welcome.png) | ![Popup, light](docs/images/popup.png) | ![Popup, dark](docs/images/popup-dark.png) |
+
+| Side panel                               | Flow editor                             | Userscripts                         |
+| ---------------------------------------- | --------------------------------------- | ----------------------------------- |
+| ![Side panel](docs/images/sidepanel.png) | ![Flow editor](docs/images/builder.png) | ![Options](docs/images/options.png) |
+
 ## What's different from upstream
 
 This project started from [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) (MIT) and has
