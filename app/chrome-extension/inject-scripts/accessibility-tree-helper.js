@@ -312,7 +312,9 @@
       (rect.right < -OFFSCREEN_PX ||
         rect.bottom < -OFFSCREEN_PX ||
         rect.left > view.innerWidth + OFFSCREEN_PX ||
-        rect.top > view.innerHeight + OFFSCREEN_PX)
+        // Below the fold is normal on long pages. Only content placed beyond the
+        // document's own scrollable extent counts as hidden.
+        rect.top > pageBottomInViewport(view) + OFFSCREEN_PX)
     )
       reason = 'off-screen';
     else if (cs && isZeroMeasure(cs.fontSize)) reason = 'font-size-0';
@@ -333,6 +335,21 @@
     }
     hiddenReasonCache.set(el, reason);
     return reason;
+  }
+
+  /** Bottom edge of the scrollable document in viewport coordinates. */
+  function pageBottomInViewport(view) {
+    try {
+      const doc = view.document;
+      const scrollH = Math.max(
+        doc.documentElement ? doc.documentElement.scrollHeight : 0,
+        doc.body ? doc.body.scrollHeight : 0,
+        view.innerHeight,
+      );
+      return scrollH - (view.scrollY || 0);
+    } catch (_) {
+      return view.innerHeight;
+    }
   }
 
   /**
