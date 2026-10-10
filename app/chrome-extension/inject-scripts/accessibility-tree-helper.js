@@ -1039,7 +1039,20 @@
    * @param {Element} el
    * @param {string} refId
    */
-  function formatSnapshotLine(el, refId, maxName) {
+  /** host/filename for an image src, or '' for data/blob/unparseable URLs. */
+  function imageSrcLabel(el) {
+    try {
+      const raw = el.currentSrc || el.getAttribute('src') || '';
+      if (!raw || /^(data|blob|javascript):/i.test(raw)) return '';
+      const u = new URL(raw, location.href);
+      const name = u.pathname.split('/').filter(Boolean).pop() || '';
+      return `${u.host}/${name}`.slice(0, 80);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatSnapshotLine(el, refId, maxName, includeImages) {
     const cap = Number.isFinite(maxName) && maxName >= 10 ? Math.floor(maxName) : 80;
     const clip = (text) => {
       const flat = String(text).replace(/\s+/g, ' ').trim();
@@ -1054,7 +1067,12 @@
       const rect = el.getBoundingClientRect();
       const size = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
       const shown = clip(alt);
-      return shown ? `${refId} img "${shown}" ${size}` : `${refId} img ${size}`;
+      const base = shown ? `${refId} img "${shown}" ${size}` : `${refId} img ${size}`;
+      if (includeImages) {
+        const src = imageSrcLabel(el);
+        if (src) return `${base} src=${src}`;
+      }
+      return base;
     }
     const role = inferRole(el);
     const name = clip(inferLabel(el) || '');
@@ -1183,6 +1201,8 @@
     const find = opts.find && typeof opts.find === 'object' ? opts.find : null;
     const findText = find && find.text ? String(find.text).toLowerCase() : '';
     const findRole = find && find.role ? String(find.role).toLowerCase() : '';
+    const collapseRepeats = opts.collapseRepeats !== false && !find;
+    const includeImages = opts.includeImages === true;
 
     for (const k in window.__claudeElementMap) {
       const weak = window.__claudeElementMap[k];
@@ -1224,6 +1244,82 @@
       if (filter === 'interactive') return isInteractive(el);
       if (isInteractive(el) || isStructural(el) || isFormishContainer(el)) return true;
       return inferLabel(el).length > 0;
+    };
+
+    const pushLine = (line, group) => {
+      if (lines.length < maxItems) {
+        lines.push(line);
+        groups.push(group);
+      } else {
+        omitted++;
+        omittedGroups[group] = (omittedGroups[group] || 0) + 1;
+      }
+    };
+
+    const COLLAPSE_KEEP = 5;
+    const ROW_TAGS = ['li', 'tr', 'article'];
+    const ROW_ROLES = ['listitem', 'row', 'article', 'treeitem'];
+    const NEVER_COLLAPSE = [
+      'option',
+      'input',
+      'button',
+      'a',
+      'select',
+      'textarea',
+      'label',
+      'summary',
+      'img',
+    ];
+    const rowSignature = (child) => {
+      if (!child || !child.tagName) return '';
+      const tag = child.tagName.toLowerCase();
+      if (NEVER_COLLAPSE.includes(tag)) return '';
+      const role = (child.getAttribute('role') || '').toLowerCase();
+      const kids = child.children || [];
+      const kidTags = [];
+      for (let i = 0; i < kids.length && i < 8; i++) kidTags.push(kids[i].tagName.toLowerCase());
+      const rowLike = ROW_TAGS.includes(tag) || ROW_ROLES.includes(role);
+      // Generic containers (cards) need children to count as a repeated shape.
+      if (!rowLike && kidTags.length === 0) return '';
+      return `${rowLike ? 'R' : 'C'}|${tag}|${role}|${kidTags.join(',')}`;
+    };
+    const shouldWalkChild = (child) => {
+      if (hiddenPolicy(child) !== 'all') return false;
+      if (scope === 'viewport' && !intersectsViewport(child)) return false;
+      return true;
+    };
+
+    /** Walk children, collapsing long runs of same-shape siblings. */
+    const walkChildren = (el, depth, group) => {
+      const kids = Array.from(el.children || []);
+      // Drilling into a collapsed container (refId) lists its rows in full, paged by cursor.
+      if (!collapseRepeats || kids.length <= COLLAPSE_KEEP || (opts.refId && el === root)) {
+        forEachChildElement(el, (child) => walk(child, depth + 1, group));
+        return;
+      }
+      let i = 0;
+      while (i < kids.length) {
+        const sig = rowSignature(kids[i]);
+        let j = i + 1;
+        if (sig) while (j < kids.length && rowSignature(kids[j]) === sig) j++;
+        const runLen = j - i;
+        const rowLike = sig.startsWith('R|');
+        const minRun = rowLike ? COLLAPSE_KEEP + 1 : COLLAPSE_KEEP + 3;
+        if (sig && runLen >= minRun) {
+          for (let k = i; k < i + COLLAPSE_KEEP; k++) walk(kids[k], depth + 1, group);
+          let hidden = 0;
+          for (let k = i + COLLAPSE_KEEP; k < j; k++) {
+            state.visited.add(kids[k]);
+            if (shouldWalkChild(kids[k])) hidden++;
+          }
+          if (hidden > 0) {
+            pushLine(`\u2026 ${hidden} more similar rows (${assignStableRef(el)})`, group);
+          }
+        } else {
+          for (let k = i; k < j; k++) walk(kids[k], depth + 1, group);
+        }
+        i = j;
+      }
     };
 
     const walk = (el, depth, parentGroup) => {
@@ -1278,22 +1374,16 @@
         }
         if (!skip) {
           const refId = assignStableRef(el);
-          const line = formatSnapshotLine(el, refId, maxName);
+          const line = formatSnapshotLine(el, refId, maxName, includeImages);
           const bareGeneric = /^ref_\d+ generic$/.test(line);
           if (!bareGeneric) {
-            if (lines.length < maxItems) {
-              lines.push(line);
-              groups.push(group);
-            } else {
-              omitted++;
-              omittedGroups[group] = (omittedGroups[group] || 0) + 1;
-            }
+            pushLine(line, group);
           }
         }
       }
       if (depth >= MAX_DEPTH || state.processed >= MAX_NODES) return;
 
-      forEachChildElement(el, (child) => walk(child, depth + 1, group));
+      walkChildren(el, depth, group);
 
       // Open shadow roots at any depth. Closed roots are not reachable.
       try {
@@ -1309,7 +1399,42 @@
 
     if (root) walk(root, 0, 'page');
 
+    // Hint when the viewport is mostly pixels the text snapshot cannot describe.
+    let hint = '';
+    try {
+      const vw = window.innerWidth || 0;
+      const vh = window.innerHeight || 0;
+      const vArea = vw * vh;
+      if (vArea > 0) {
+        const media = document.querySelectorAll('canvas, video');
+        for (let i = 0; i < media.length && i < 20 && !hint; i++) {
+          const r = media[i].getBoundingClientRect();
+          const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+          const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+          if ((w * h) / vArea >= 0.5) {
+            const kind = media[i].tagName.toLowerCase();
+            hint = `page appears visual-only (${kind}); consider chrome_screenshot`;
+          }
+        }
+        if (!hint) {
+          const ctl = document.querySelectorAll('button, [role="button"], a[href]');
+          let unlabeled = 0;
+          for (let i = 0; i < ctl.length && i < 300; i++) {
+            const c = ctl[i];
+            if (!intersectsViewport(c)) continue;
+            if (!inferLabel(c) && c.querySelector('img, svg, canvas')) unlabeled++;
+          }
+          if (unlabeled >= 3) {
+            hint = `${unlabeled} controls are image-only with no label; consider chrome_screenshot`;
+          }
+        }
+      }
+    } catch (_) {
+      hint = '';
+    }
+
     return {
+      hint,
       lines,
       groups,
       omittedGroups,
@@ -1724,6 +1849,8 @@
             refId: request.refId,
             maxItems: request.maxItems,
             maxNameChars: request.maxNameChars,
+            collapseRepeats: request.collapseRepeats,
+            includeImages: request.includeImages,
             find: request.find,
             includeHidden: request.includeHidden === true,
           });

@@ -598,7 +598,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         observe: {
           description:
-            'After the action, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
+            'After the action, wait until the DOM is quiet and append diff (the change since before the action, not a full snapshot; capped at 6000 characters, with domChangesCut counting entries dropped). true uses 300ms. The string full also appends a fresh bounded snapshot (viewport, interactive, with remaining/nextCursor). {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
         },
         confirmCrossOrigin: {
           type: 'boolean',
@@ -753,6 +753,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       properties: {
         name: { type: 'string', description: 'Name for the screenshot, if saving as PNG' },
         selector: { type: 'string', description: 'CSS selector for element to screenshot' },
+        ref: {
+          type: 'string',
+          description:
+            'Element ref from chrome_snapshot or chrome_find (top frame). Crops the screenshot to that element. Cheaper than a full screenshot when you only need to see one image, canvas, or control.',
+        },
         tabId: {
           type: 'number',
           description: 'Target tab ID to capture from (default: active tab).',
@@ -1259,7 +1264,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         observe: {
           description:
-            'After the click, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
+            'After the click, wait until the DOM is quiet and append diff (the change since before the action, not a full snapshot; capped at 6000 characters, with domChangesCut counting entries dropped). true uses 300ms. The string full also appends a fresh bounded snapshot (viewport, interactive, with remaining/nextCursor). {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
         },
         confirmCrossOrigin: {
           type: 'boolean',
@@ -1309,7 +1314,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         observe: {
           description:
-            'After the fill, wait until the DOM is quiet and append diff. true uses 300ms. {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
+            'After the fill, wait until the DOM is quiet and append diff (the change since before the action, not a full snapshot; capped at 6000 characters, with domChangesCut counting entries dropped). true uses 300ms. The string full also appends a fresh bounded snapshot (viewport, interactive, with remaining/nextCursor). {settleMs} is capped at 3000. diff has url, title, domChanges (added/removed/changed, 40 each), newRequests (20), newConsoleErrors (10), and dialogOpened.',
         },
         confirmCrossOrigin: {
           type: 'boolean',

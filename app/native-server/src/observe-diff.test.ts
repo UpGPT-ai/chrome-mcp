@@ -1,5 +1,10 @@
 import { describe, expect, test } from '@jest/globals';
-import { buildObserveDiff, newStringEntries, parseObserve } from 'chrome-mcp-shared';
+import {
+  buildObserveDiff,
+  capObserveDiffChars,
+  newStringEntries,
+  parseObserve,
+} from 'chrome-mcp-shared';
 
 describe('parseObserve', () => {
   test('treats omitted and false as off', () => {
@@ -15,8 +20,12 @@ describe('parseObserve', () => {
     expect(parseObserve({ settleMs: 9000 })).toEqual({ settleMs: 3000 });
   });
 
+  test("observe:'full' asks for the diff plus a fresh snapshot", () => {
+    expect(parseObserve('full')).toEqual({ settleMs: 300, full: true });
+  });
+
   test('rejects a bad settle value', () => {
-    expect(parseObserve('yes')).toEqual({ error: 'observe must be true or { settleMs }' });
+    expect(parseObserve('yes')).toEqual({ error: "observe must be true, 'full', or { settleMs }" });
     expect(parseObserve({ settleMs: -1 })).toEqual({
       error: 'observe.settleMs must be a non-negative number',
     });
@@ -63,5 +72,32 @@ describe('newStringEntries', () => {
       'new boom',
       'old',
     ]);
+  });
+});
+
+describe('capObserveDiffChars', () => {
+  const makeDiff = (n: number) => ({
+    url: null,
+    title: null,
+    domChanges: {
+      added: Array.from({ length: n }, (_, i) => `ref_${i} button "${'x'.repeat(100)}"`),
+      removed: [],
+      changed: [],
+    },
+    newRequests: [],
+    newConsoleErrors: [],
+    dialogOpened: false,
+  });
+
+  test('leaves a small diff untouched', () => {
+    const diff = makeDiff(2);
+    expect(capObserveDiffChars(diff, 6000)).toBe(diff);
+  });
+
+  test('drops tail entries to fit and reports how many', () => {
+    const out = capObserveDiffChars(makeDiff(40), 1000);
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(1000);
+    expect(out.domChangesCut).toBe(40 - out.domChanges.added.length);
+    expect(out.domChangesCut).toBeGreaterThan(0);
   });
 });

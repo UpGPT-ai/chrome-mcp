@@ -53,6 +53,9 @@ describe('snapshot frames', () => {
   test('prefixes only the local ref and keeps an existing frame suffix', () => {
     expect(prefixSnapshotLine('ref_4 button "Go"', 6)).toBe('ref_4@6 button "Go"');
     expect(prefixSnapshotLine('ref_4@6 button "Go"', 6)).toBe('ref_4@6 button "Go"');
+    expect(prefixSnapshotLine('\u2026 12 more similar rows (ref_9)', 6)).toBe(
+      '\u2026 12 more similar rows (ref_9@6)',
+    );
     expect(prefixSnapshotLine('ref_4 button "Go"', 0)).toBe('ref_4 button "Go"');
   });
 

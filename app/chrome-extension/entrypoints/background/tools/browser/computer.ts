@@ -91,7 +91,7 @@ interface ComputerParams {
   tabId?: number; // target existing tab id
   windowId?: number;
   background?: boolean; // avoid focusing/activating
-  observe?: boolean | { settleMs?: number };
+  observe?: boolean | 'full' | { settleMs?: number };
 }
 
 // Minimal CDP helper encapsulated here to avoid scattering CDP code
@@ -331,7 +331,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
       if (!tab.id)
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
 
-      if (observe) session = await beginObserve(tab.id, observe.settleMs);
+      if (observe) session = await beginObserve(tab.id, observe.settleMs, observe.full === true);
 
       // Execute the action and capture frame on success
       const result = await this.executeAction(params, tab);

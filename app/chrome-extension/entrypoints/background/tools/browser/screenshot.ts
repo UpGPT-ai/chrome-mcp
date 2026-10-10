@@ -1,6 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { TOOL_NAMES, parseAgentRef } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import {
   canvasToDataURL,
@@ -46,6 +46,8 @@ if (typeof __MAX_CAP_RATE === 'number' && __MAX_CAP_RATE > 0) {
 interface ScreenshotToolParams {
   name: string;
   selector?: string;
+  /** Element ref from chrome_snapshot / chrome_find; crops to that element. */
+  ref?: string;
   tabId?: number;
   background?: boolean;
   windowId?: number;
@@ -112,19 +114,41 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
    * Execute screenshot operation
    */
   async execute(args: ScreenshotToolParams): Promise<ToolResult> {
-    const {
-      name = 'screenshot',
-      selector,
-      storeBase64 = false,
-      fullPage = false,
-      savePng = true,
-    } = args;
+    const { name = 'screenshot', storeBase64 = false, fullPage = false, savePng = true } = args;
 
+    let selector = args.selector;
     console.log(`Starting screenshot with options:`, args);
 
     // Resolve target tab (explicit or active)
     const explicit = await this.tryGetTab(args.tabId);
     const tab = explicit || (await this.getActiveTabOrThrowInWindow(args.windowId));
+
+    if (typeof args.ref === 'string' && args.ref.trim() && !selector) {
+      const parsed = parseAgentRef(args.ref);
+      if (parsed.frameId) {
+        return createErrorResponse(
+          'ref is inside an iframe; element crops only support the top frame. Use chrome_computer screenshot instead.',
+        );
+      }
+      try {
+        await this.injectContentScript(tab.id!, ['inject-scripts/accessibility-tree-helper.js']);
+        const resolved = await this.sendMessageToTab(tab.id!, {
+          action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
+          ref: parsed.ref,
+        });
+        if (!resolved?.success || !resolved.selector) {
+          return createErrorResponse(
+            `ref "${args.ref}" not found or expired. Take a fresh chrome_snapshot.`,
+          );
+        }
+        selector = String(resolved.selector);
+        args = { ...args, selector };
+      } catch (error) {
+        return createErrorResponse(
+          `Could not resolve ref: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
     // Check URL restrictions
     if (

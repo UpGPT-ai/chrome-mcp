@@ -25,7 +25,7 @@ interface ClickToolParams {
   modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean };
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
-  observe?: boolean | { settleMs?: number };
+  observe?: boolean | 'full' | { settleMs?: number };
 }
 
 /**
@@ -130,7 +130,7 @@ class ClickTool extends BaseBrowserToolExecutor {
         }
       }
 
-      if (observe) session = await beginObserve(tab.id, observe.settleMs);
+      if (observe) session = await beginObserve(tab.id, observe.settleMs, observe.full === true);
 
       await this.injectContentScript(
         tab.id,
@@ -210,7 +210,7 @@ interface FillToolParams {
   frameId?: number;
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
-  observe?: boolean | { settleMs?: number };
+  observe?: boolean | 'full' | { settleMs?: number };
 }
 
 /**
@@ -288,7 +288,7 @@ class FillTool extends BaseBrowserToolExecutor {
         }
       }
 
-      if (observe) session = await beginObserve(tab.id, observe.settleMs);
+      if (observe) session = await beginObserve(tab.id, observe.settleMs, observe.full === true);
 
       await this.injectContentScript(
         tab.id,

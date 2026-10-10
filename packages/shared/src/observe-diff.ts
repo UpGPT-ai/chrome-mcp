@@ -10,6 +10,8 @@ export const OBSERVE_SETTLE_MAX_MS = 3000;
 export const OBSERVE_REQUEST_CAP = 20;
 export const OBSERVE_CONSOLE_CAP = 10;
 export const OBSERVE_DOM_CAP = 40;
+/** Default character budget for the diff text returned after an action. */
+export const OBSERVE_DIFF_MAX_CHARS = 6000;
 
 export interface ObservePair {
   before: string;
@@ -26,6 +28,8 @@ export interface ObserveDiff {
   url: ObservePair | null;
   title: ObservePair | null;
   domChanges: SnapshotLineDiff;
+  /** Number of dom change entries dropped to stay inside the character budget. */
+  domChangesCut?: number;
   newRequests: ObserveRequest[];
   newConsoleErrors: string[];
   dialogOpened: boolean;
@@ -43,11 +47,18 @@ export interface ObserveFacts {
   dialogOpened: boolean;
 }
 
-export function parseObserve(value: unknown): { settleMs: number } | { error: string } | null {
+export type ParsedObserve = { settleMs: number; full?: true };
+
+/**
+ * observe:true or {settleMs} returns the diff only. observe:'full' returns the
+ * diff plus a fresh bounded snapshot (viewport, interactive, paginated).
+ */
+export function parseObserve(value: unknown): ParsedObserve | { error: string } | null {
   if (value === undefined || value === null || value === false) return null;
   if (value === true) return { settleMs: OBSERVE_SETTLE_DEFAULT_MS };
+  if (value === 'full') return { settleMs: OBSERVE_SETTLE_DEFAULT_MS, full: true };
   if (typeof value !== 'object') {
-    return { error: 'observe must be true or { settleMs }' };
+    return { error: "observe must be true, 'full', or { settleMs }" };
   }
   const raw = (value as { settleMs?: unknown }).settleMs;
   if (raw === undefined) return { settleMs: OBSERVE_SETTLE_DEFAULT_MS };
@@ -56,6 +67,38 @@ export function parseObserve(value: unknown): { settleMs: number } | { error: st
     return { error: 'observe.settleMs must be a non-negative number' };
   }
   return { settleMs: Math.min(OBSERVE_SETTLE_MAX_MS, Math.floor(settle)) };
+}
+
+/**
+ * Keep the serialized diff inside maxChars by dropping dom change entries from
+ * the tail (changed first, then removed, then added). Reports how many were cut.
+ */
+export function capObserveDiffChars(
+  diff: ObserveDiff,
+  maxChars: number = OBSERVE_DIFF_MAX_CHARS,
+): ObserveDiff {
+  const limit = Number.isFinite(maxChars)
+    ? Math.max(200, Math.floor(maxChars))
+    : OBSERVE_DIFF_MAX_CHARS;
+  if (JSON.stringify(diff).length <= limit) return diff;
+  const added = [...diff.domChanges.added];
+  const removed = [...diff.domChanges.removed];
+  const changed = [...diff.domChanges.changed];
+  let cut = 0;
+  const build = (): ObserveDiff => ({
+    ...diff,
+    domChanges: { added, removed, changed },
+    domChangesCut: cut,
+  });
+  let out = build();
+  while (JSON.stringify(out).length > limit && added.length + removed.length + changed.length > 0) {
+    if (changed.length) changed.pop();
+    else if (removed.length) removed.pop();
+    else added.pop();
+    cut++;
+    out = build();
+  }
+  return out;
 }
 
 export function changedPair(before: string, after: string): ObservePair | null {

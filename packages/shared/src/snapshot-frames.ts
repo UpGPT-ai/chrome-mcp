@@ -46,6 +46,9 @@ export function frameIsSameOrigin(parentUrl: string, frameUrl: string): boolean 
 export function prefixSnapshotLine(line: string, frameId: number): string {
   if (!frameId) return line;
   if (/^ref_\d+@\d+\b/.test(line)) return line;
+  // Collapsed-run lines carry the container ref in parentheses at the end.
+  const collapsed = line.match(/^(\u2026 \d+ more similar rows \()(ref_\d+)\)$/);
+  if (collapsed) return `${collapsed[1]}${collapsed[2]}@${frameId})`;
   return line.replace(/^(ref_\d+)\b/, `$1@${frameId}`);
 }
 
