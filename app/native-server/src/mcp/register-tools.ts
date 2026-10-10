@@ -30,12 +30,13 @@ async function callExtensionTool(name: string, args: Record<string, unknown>): P
   }
 }
 
+// Short timeout: tools/list must stay fast when the extension is not connected yet.
 async function listDynamicFlowTools(): Promise<Tool[]> {
   try {
     const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
       {},
       'rr_list_published_flows',
-      20000,
+      3000,
     );
     if (response && response.status === 'success' && Array.isArray(response.items)) {
       const tools: Tool[] = [];
