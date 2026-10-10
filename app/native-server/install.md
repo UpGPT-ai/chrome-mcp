@@ -4,28 +4,28 @@ This document describes the installation and registration process for the Chrome
 
 ## Installation Overview
 
-The installation and registration flow for the Chrome MCP Bridge is as follows:
+Install from the release package (`chrome-mcp-package-*.zip` on the GitHub releases page), not from npm. The package bundles the bridge, so the only prerequisite is Node.js 20+.
 
 ```
-npm install -g mcp-chrome-bridge
-└─ postinstall.js
-   ├─ Copy the executable to npm_prefix/bin   ← always writable (user or root permissions)
-   ├─ Attempt user-level registration         ← no sudo required, succeeds in most cases
-   └─ If it fails ➜ prompt the user to run mcp-chrome-bridge register --system
-      └─ Must be run manually with administrator privileges
+unzip the package
+└─ bash install.sh --yes        (macOS / Linux)
+   install.cmd                  (Windows, double-click)
+   ├─ Copies the bridge to ~/.chrome-mcp-agent
+   ├─ Registers the Native Messaging host for your user (no sudo)
+   └─ Prints the extension install steps and your client config
 ```
 
-The diagram above shows the complete process, from the global install through to completed registration.
+Then run `node show-config.js` for your MCP client's config and click **Connect** in the extension popup.
+
+> **Do not run `npm install -g mcp-chrome-bridge`.** That is the upstream project, a different package. It overwrites this registration and the connection stops working after Chrome restarts.
+
+The sections below describe what the installer does, for troubleshooting and manual registration.
 
 ## Detailed Installation Steps
 
-### 1. Global Install
+### 1. Install
 
-```bash
-npm install -g mcp-chrome-bridge
-```
-
-After installation completes, the system automatically attempts to register the Native Messaging host in the user directory. This does not require administrator privileges and is the recommended way to install.
+Run the installer from the unzipped package folder as shown above. Registration is automatic, user-level, and needs no administrator privileges.
 
 ### 2. User-Level Registration
 
@@ -47,13 +47,13 @@ Manifest file location
 If automatic registration fails, or if you want to register manually, you can run:
 
 ```bash
-mcp-chrome-bridge register
+node native-server/dist/cli.js register
 ```
 
 **Recommended: run the diagnostic tool to check for problems:**
 
 ```bash
-mcp-chrome-bridge doctor
+node native-server/dist/cli.js doctor
 ```
 
 ### 3. System-Level Registration
@@ -66,10 +66,10 @@ There are two ways to do system-level registration:
 
 ```bash
 # macOS/Linux
-sudo mcp-chrome-bridge register --system
+sudo node native-server/dist/cli.js register --system
 
 # Windows (run Command Prompt as Administrator)
-mcp-chrome-bridge register --system
+node native-server/dist/cli.js register --system
 ```
 
 System-level installation requires administrator privileges to write to system directories and the registry.
@@ -80,14 +80,14 @@ System-level installation requires administrator privileges to write to system d
 Run Command Prompt or PowerShell as Administrator, then execute:
 
 ```
-mcp-chrome-bridge register
+node native-server/dist/cli.js register
 ```
 
 **macOS/Linux**:
 Use the sudo command:
 
 ```
-sudo mcp-chrome-bridge register
+sudo node native-server/dist/cli.js register
 ```
 
 ## Registration Process Explained
@@ -96,14 +96,14 @@ sudo mcp-chrome-bridge register
 
 ```
 Registration flow
-├─ User-level registration (mcp-chrome-bridge register)
+├─ User-level registration (node native-server/dist/cli.js register)
 │  ├─ Get the user-level manifest path
 │  ├─ Create the user directory
 │  ├─ Generate the manifest content
 │  ├─ Write the manifest file
 │  └─ Windows: create a user-level registry entry
 │
-└─ System-level registration (mcp-chrome-bridge register --system)
+└─ System-level registration (node native-server/dist/cli.js register --system)
    ├─ Check whether administrator privileges are present
    │  ├─ Has privileges → create the system directory and write the manifest directly
    │  └─ No privileges → prompt the user to run with administrator privileges
@@ -147,7 +147,7 @@ manifest.json
    - On Windows, create a system-level registry entry
 3. If administrator privileges are not present:
    - Prompt the user to re-run the command with administrator privileges
-   - macOS/Linux: `sudo mcp-chrome-bridge register --system`
+   - macOS/Linux: `sudo node native-server/dist/cli.js register --system`
    - Windows: run Command Prompt as Administrator
 
 ## Verifying the Installation
@@ -202,7 +202,7 @@ Troubleshooting
 │  │  ├─ "Native host has exited" error
 │  │  └─ Run mcp-chrome-bridge fix-permissions
 │  │
-│  └─ Try mcp-chrome-bridge register --system
+│  └─ Try node native-server/dist/cli.js register --system
 │
 ├─ Path problems
 │  ├─ Check the Node.js install (node -v)
@@ -249,7 +249,7 @@ If you run into problems during installation, try the following steps:
    b) **Run the diagnostic tool to auto-fix**:
 
    ```bash
-   mcp-chrome-bridge doctor --fix
+   node native-server/dist/cli.js doctor --fix
    ```
 
    c) **Set permissions manually**:
@@ -284,7 +284,7 @@ If you run into problems during installation, try the following steps:
    b) **Run the diagnostic tool to auto-fix**:
 
    ```cmd
-   mcp-chrome-bridge doctor --fix
+   node native-server/dist/cli.js doctor --fix
    ```
 
    c) **Check file attributes manually**:
@@ -317,7 +317,7 @@ If you run into problems during installation, try the following steps:
    - For system level, check `HKLM\Software\Google\Chrome\NativeMessagingHosts\`
 
 5. Try a system-level installation
-   - Use the `mcp-chrome-bridge register --system` command
+   - Use the `node native-server/dist/cli.js register --system` command
    - Or run directly with administrator privileges
 
 6. Check the error messages in the console output
