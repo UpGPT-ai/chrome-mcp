@@ -17,7 +17,7 @@ The zip is built by `scripts/package.sh` and is named
 
 Unzip it somewhere permanent. Chrome loads the extension straight from that folder, so do not leave
 it in Downloads or in Dropbox, OneDrive, Google Drive or iCloud (sync clients lock the many small
-files `npm install` creates). If extraction made a doubled `chrome-mcp-package/chrome-mcp-package`,
+files Chrome and the native server create). If extraction made a doubled `chrome-mcp-package/chrome-mcp-package`,
 use the inner folder.
 
 ## macOS
@@ -27,9 +27,9 @@ cd /path/to/chrome-mcp-package
 bash install.sh
 ```
 
-The installer checks Node, runs `npm install`, registers the native messaging host with Chrome and
+The installer checks Node, registers the native messaging host with Chrome and
 runs a self-check. It ends with `Native host installed and registered.` Options: `--yes` for no
-prompts and `--skip-npm-install`.
+prompts. No `npm install` is needed; the server is a self-contained bundle.
 
 ## Windows
 
