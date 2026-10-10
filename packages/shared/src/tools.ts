@@ -1102,6 +1102,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Only search tabs in this window id.',
         },
+        activateUnreadable: {
+          type: 'boolean',
+          description:
+            'Chrome only lets the extension read a background tab after it has been visited. When true (default), briefly switch to each unreadable tab, read it, then restore the original active tab. Set false to never switch tabs.',
+        },
       },
       required: ['query'],
     },

@@ -7,6 +7,7 @@ import { readSitePolicySettings } from './high-risk';
 const MAX_TABS = 40;
 const CONCURRENCY = 4;
 const ATTEMPTS = 3;
+const ACTIVATE_SETTLE_MS = 250;
 const RETRY_DELAY_MS = 400;
 const MAX_TEXT_CHARS = 300_000;
 const DEFAULT_LIMIT = 8;
@@ -19,6 +20,7 @@ interface SearchArgs {
   limit?: unknown;
   windowId?: unknown;
   currentWindowOnly?: unknown;
+  activateUnreadable?: unknown;
 }
 
 interface Hit {
@@ -98,7 +100,6 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
     const tabs = await chrome.tabs.query(query_);
 
     let skippedPolicy = 0;
-    let failedReads = 0;
     let sleeping = 0;
     const candidates: chrome.tabs.Tab[] = [];
     for (const tab of tabs) {
@@ -128,7 +129,7 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
       reasons.set(key, (reasons.get(key) ?? 0) + 1);
     };
 
-    const failedTabs: string[] = [];
+    const failures = new Map<number, { tab: chrome.tabs.Tab; message: string }>();
     const phrase = query.toLowerCase();
     const hits: Hit[] = [];
     const readTab = async (tab: chrome.tabs.Tab, attempt = 1): Promise<void> => {
@@ -173,9 +174,10 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
           return readTab(tab, attempt + 1);
         }
-        failedReads += 1;
-        failedTabs.push(`${tabId} ${(tab.url || '').slice(0, 60)}`);
-        noteReason(error instanceof Error ? error.message : String(error));
+        failures.set(tabId, {
+          tab,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     };
     // Bounded concurrency: injecting into dozens of tabs at once makes Chrome reject
@@ -185,6 +187,39 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
       while (next < searched.length) await readTab(searched[next++]);
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, searched.length) }, worker));
+
+    // Chrome grants this extension a background tab's content only after the tab has
+    // been visited. Visit each unreadable tab once, read it, then put the user's
+    // original active tab back in every window we touched.
+    let activated = 0;
+    if (args.activateUnreadable !== false && failures.size > 0) {
+      const originalActive = new Map<number, number>();
+      for (const tab of tabs) {
+        if (tab.active && tab.id != null) originalActive.set(tab.windowId, tab.id);
+      }
+      const touched = new Set<number>();
+      for (const [tabId, { tab }] of [...failures]) {
+        try {
+          await chrome.tabs.update(tabId, { active: true });
+          touched.add(tab.windowId);
+          activated += 1;
+          await new Promise((resolve) => setTimeout(resolve, ACTIVATE_SETTLE_MS));
+          failures.delete(tabId);
+          await readTab(tab);
+        } catch (error) {
+          failures.set(tabId, {
+            tab,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      for (const windowId of touched) {
+        const back = originalActive.get(windowId);
+        if (back != null) await chrome.tabs.update(back, { active: true }).catch(() => undefined);
+      }
+    }
+    const failedReads = failures.size;
+    for (const { message } of failures.values()) noteReason(message);
 
     hits.sort((a, b) => b.score - a.score);
     const results = hits.slice(0, limit).map((hit) => {
@@ -211,7 +246,10 @@ class SearchTabsContentTool extends BaseBrowserToolExecutor {
             tabsSkippedByPolicy: skippedPolicy,
             tabsUnreadable: failedReads,
             tabsAsleep: sleeping,
-            unreadableTabs: failedTabs.slice(0, 50),
+            tabsActivated: activated,
+            unreadableTabs: [...failures.entries()]
+              .slice(0, 50)
+              .map(([id, f]) => `${id} ${(f.tab.url || '').slice(0, 60)}`),
             unreadableReasons: Object.fromEntries(reasons),
             truncated,
             totalMatches: hits.length,
