@@ -16,7 +16,7 @@
       @pane-click="onPaneClick"
       @edge-click="onEdgeClick"
     >
-      <Background patternColor="#cdcdcd" :gap="32" pattern-class="canvas-pattern" />
+      <Background patternColor="#64748b" :gap="32" pattern-class="canvas-pattern" />
     </VueFlow>
   </section>
 </template>
@@ -127,10 +127,10 @@ watchEffect(() => {
     label: labelFor(e),
     labelShowBg: true,
     labelBgPadding: [4, 6],
-    labelBgStyle: { fill: '#e5e5e5', fillOpacity: 0.95, stroke: '#ffffff', strokeWidth: 1 },
-    labelStyle: { fill: '#666666', fontWeight: 600, fontSize: 11 },
+    labelBgStyle: { fill: '#94a3b8', fillOpacity: 0.95, stroke: '#64748b', strokeWidth: 1 },
+    labelStyle: { fill: '#0f172a', fontWeight: 600, fontSize: 11 },
     style: {
-      stroke: '#cdcdcd',
+      stroke: '#94a3b8',
       strokeWidth: 1.5,
     },
     animated: false,
@@ -255,8 +255,7 @@ defineExpose({ zoomIn, zoomOut, fitAll });
 .canvas {
   position: relative;
   overflow: hidden;
-  /* Use fixed background as requested */
-  background: #ededed;
+  background: var(--cm-surface, #ededed);
   /* Ensure VueFlow gets a non-zero layout size */
   width: 100%;
   height: 100%;
@@ -264,13 +263,13 @@ defineExpose({ zoomIn, zoomOut, fitAll });
 
 :deep(.workflow-node) {
   max-width: 400px;
-  background: #fff;
+  background: var(--cm-bg, #fff);
   border: 1px solid var(--rr-border);
   border-radius: 16px;
   /* Requested node spacing */
   padding: 10px 16px 10px 10px;
   /* Text look */
-  color: #8f8f8f;
+  color: var(--cm-text-muted, #8f8f8f);
   font-size: 12px;
   /* Interaction */
   transition:
@@ -458,7 +457,7 @@ defineExpose({ zoomIn, zoomOut, fitAll });
 :deep(.node-name) {
   font-size: 12px;
   font-weight: 500;
-  color: #0d0d0d;
+  color: var(--cm-text, #0d0d0d);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -468,7 +467,7 @@ defineExpose({ zoomIn, zoomOut, fitAll });
 
 :deep(.node-subtitle) {
   font-size: 10px;
-  color: #8f8f8f;
+  color: var(--cm-text-muted, #8f8f8f);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -522,7 +521,7 @@ defineExpose({ zoomIn, zoomOut, fitAll });
 
 /* Background grid */
 :deep(.vue-flow__background) {
-  background-color: #ededed;
+  background-color: var(--cm-surface, #ededed);
 }
 
 /* Override default VueFlow node box to avoid extra white box behind custom node */
@@ -549,8 +548,8 @@ defineExpose({ zoomIn, zoomOut, fitAll });
   position: relative;
   height: 26px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.03);
-  color: #8f8f8f;
+  background: color-mix(in srgb, var(--cm-text, #000) 6%, transparent);
+  color: var(--cm-text-muted, #8f8f8f);
   display: flex;
   align-items: center;
   padding: 0 8px;

@@ -1,7 +1,13 @@
 <template>
   <div class="page">
     <header class="topbar">
-      <h1>{{ m('userscriptsManagerTitle') }}</h1>
+      <div class="brand">
+        <img class="brand-logo" src="/icon/48.png" alt="" width="36" height="36" />
+        <div>
+          <h1>{{ m('userscriptsManagerTitle') }}</h1>
+          <span class="hint">Chrome MCP from UpGPT.ai</span>
+        </div>
+      </div>
       <div class="switch">
         <label>
           <input type="checkbox" v-model="emergencyDisabled" @change="saveEmergency" />
@@ -300,7 +306,32 @@ function m(key: string, substitutions?: string | string[]) {
 }
 </script>
 
+<style>
+body {
+  margin: 0;
+  background: var(--cm-bg);
+}
+</style>
+
 <style scoped>
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand-logo {
+  border-radius: 8px;
+}
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
 .page {
   font-family: var(--cm-font);
   background: var(--cm-bg);
