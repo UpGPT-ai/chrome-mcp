@@ -49,6 +49,7 @@ export const TOOL_NAMES = {
     FILE_UPLOAD: 'chrome_upload_file',
     READ_PAGE: 'chrome_read_page',
     SNAPSHOT: 'chrome_snapshot',
+    FIND: 'chrome_find',
     WAIT_FOR: 'chrome_wait_for',
     COMPUTER: 'chrome_computer',
     HANDLE_DIALOG: 'chrome_handle_dialog',
@@ -235,7 +236,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Compact accessibility snapshot of the page, one line per element: ref role "name" value=".." and state flags (disabled, checked, expanded, required, invalid). Refs stay stable for the same element while it remains in the DOM. Hidden text is dropped unless includeHidden is true. Returned lines, title, and diffs are inside the untrusted-content envelope. ' +
       UNTRUSTED_INSTRUCTION +
-      '\nPreferred order: chrome_snapshot -> act by ref (chrome_click_element / chrome_fill_or_select / chrome_computer with observe:true) -> read the diff. Take a screenshot only when layout or pixels matter.\nPass `since` (a previous snapshotId) to receive only added, removed, and changed lines.\nPass pierce:true to walk closed shadow roots and cross-origin frames via CDP. Those refs look like cdp_N and are resolved with DOM.resolveNode. includeHidden applies to the accessibility snapshot; pierce follows the CDP tree. chrome_click_element and chrome_fill_or_select still use ref_ refs. If CDP is unavailable the snapshot falls back and says why. If DevTools is attached, pierce fails instead of falling back.',
+      '\nPreferred order: chrome_snapshot -> act by ref (chrome_click_element / chrome_fill_or_select / chrome_computer with observe:true) -> read the diff. Defaults keep the output small: interactive controls in the viewport, about 6000 characters. Widen with filter:"all" or scope:"page" only when you need it. For a targeted lookup use chrome_find instead of a full snapshot. Take a screenshot only when layout or pixels matter.\nWhen the result is cut it says `remaining` and `nextCursor`, and the last line `+N more: nav(22) main/form#checkout(9) ...` counts what was left out by region. Pass `cursor` for the next page, or `refId` to drill into one region. Images show only `img "alt" WxH`. Long runs of similar rows collapse to `… N more similar rows (ref_X)`.\nPass `since` (a previous snapshotId) to receive only added, removed, and changed lines.\nPass pierce:true to walk closed shadow roots and cross-origin frames via CDP. Those refs look like cdp_N and are resolved with DOM.resolveNode. includeHidden applies to the accessibility snapshot; pierce follows the CDP tree. chrome_click_element and chrome_fill_or_select still use ref_ refs. If CDP is unavailable the snapshot falls back and says why. If DevTools is attached, pierce fails instead of falling back.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -243,13 +244,13 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           enum: ['viewport', 'page'],
           description:
-            'viewport = elements intersecting the viewport. page = the whole document (default: page).',
+            'viewport = elements intersecting the viewport. page = the whole document (default: viewport).',
         },
         filter: {
           type: 'string',
           enum: ['interactive', 'all'],
           description:
-            'interactive = buttons, links, inputs, and other controls. all = interactive plus named and structural elements (default: all).',
+            'interactive = buttons, links, inputs, and other controls. all = interactive plus named and structural elements (default: interactive).',
         },
         refId: {
           type: 'string',
@@ -258,7 +259,32 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         maxItems: {
           type: 'number',
-          description: 'Maximum lines to return (default 400, max 2000).',
+          description:
+            'Maximum lines to return (default 400, max 2000). maxChars usually binds first.',
+        },
+        maxChars: {
+          type: 'number',
+          description:
+            'Character budget for the returned lines (default 6000, max 40000). The result is cut at this size and says how much remains.',
+        },
+        maxNameChars: {
+          type: 'number',
+          description: 'Cap for each name and value, ending in an ellipsis (default 80, max 200).',
+        },
+        cursor: {
+          type: 'number',
+          description:
+            'Start at this line offset. Use the nextCursor from a truncated result to read the next page.',
+        },
+        collapseRepeats: {
+          type: 'boolean',
+          description:
+            'Show the first 5 of a long run of similar list items, table rows or cards, then one `… N more similar rows (ref_X)` line (default true). Pass false to list them all.',
+        },
+        includeImages: {
+          type: 'boolean',
+          description:
+            'Add the image file name and host to image lines (default false: alt text and size only). Data URIs are never included.',
         },
         since: {
           type: 'string',
@@ -282,6 +308,51 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'boolean',
           description:
             'Walk closed shadow roots and cross-origin frames with CDP DOM.getDocument pierce and Target.setAutoAttach. Refs look like cdp_N (the backendNodeId) and are resolved with DOM.resolveNode. Omit or false to keep the accessibility snapshot and not attach the debugger. chrome_click_element and chrome_fill_or_select still use ref_ refs.',
+        },
+        includeHidden: {
+          type: 'boolean',
+          description: INCLUDE_HIDDEN_DESCRIPTION,
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FIND,
+    description:
+      'Find elements on the page by visible text, role, or proximity to a ref, and return only the matches with refs. Same line format as chrome_snapshot: ref role "name" value=".." flags. Use it for targeted lookups ("the Submit button", "all textboxes in this form") instead of a full snapshot. Searches the whole page, not only the viewport. Lines are inside the untrusted-content envelope. ' +
+      UNTRUSTED_INSTRUCTION,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'Case-insensitive substring of the element name or value.',
+        },
+        role: {
+          type: 'string',
+          description: 'Exact role to match, such as button, link, textbox, checkbox, combobox.',
+        },
+        nearRef: {
+          type: 'string',
+          description:
+            'Only elements inside the nearest form, dialog, row, list item or group around this ref.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum matches to return (default 20, max 100).',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target an existing tab by ID (default: active tab).',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Target window ID to pick the active tab when tabId is omitted.',
+        },
+        frameId: {
+          type: 'number',
+          description: 'Search this frame only (default: the top frame and same-origin frames).',
         },
         includeHidden: {
           type: 'boolean',

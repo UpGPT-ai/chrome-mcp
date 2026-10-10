@@ -19,3 +19,4 @@ export * from './cdp-tools';
 export * from './injection-guard';
 export * from './sensitive-actions';
 export * from './semantic-flow';
+export * from './snapshot-budget';

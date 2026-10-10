@@ -1039,20 +1039,106 @@
    * @param {Element} el
    * @param {string} refId
    */
-  function formatSnapshotLine(el, refId) {
+  function formatSnapshotLine(el, refId, maxName) {
+    const cap = Number.isFinite(maxName) && maxName >= 10 ? Math.floor(maxName) : 80;
+    const clip = (text) => {
+      const flat = String(text).replace(/\s+/g, ' ').trim();
+      const cut = flat.length > cap ? flat.slice(0, cap - 1) + '\u2026' : flat;
+      return cut.replace(/"/g, '\\"');
+    };
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'img') {
+      // Images are alt text and size only. Never the file name or src.
+      const alt =
+        el.getAttribute('alt') || el.getAttribute('aria-label') || el.getAttribute('title') || '';
+      const rect = el.getBoundingClientRect();
+      const size = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
+      const shown = clip(alt);
+      return shown ? `${refId} img "${shown}" ${size}` : `${refId} img ${size}`;
+    }
     const role = inferRole(el);
-    let name = inferLabel(el) || '';
-    name = name.replace(/\s+/g, ' ').trim().slice(0, MAX_LINE_LABEL).replace(/"/g, '\\"');
+    const name = clip(inferLabel(el) || '');
     let line = `${refId} ${role}`;
     if (name) line += ` "${name}"`;
     const value = snapshotValue(el);
     if (value != null && String(value) !== '') {
-      const shown = String(value).replace(/\s+/g, ' ').trim().slice(0, 80).replace(/"/g, '\\"');
+      const shown = clip(value);
       if (shown) line += ` value="${shown}"`;
     }
     const flags = snapshotFlags(el);
     if (flags.length) line += ` ${flags.join(' ')}`;
     return line;
+  }
+
+  /**
+   * Landmark/region label for grouping omitted elements, or null.
+   * @param {Element} el
+   */
+  function snapshotGroupBase(el) {
+    const tag = el.tagName.toLowerCase();
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    let base = '';
+    if (tag === 'nav' || role === 'navigation') base = 'nav';
+    else if (tag === 'main' || role === 'main') base = 'main';
+    else if (tag === 'header' || role === 'banner') base = 'header';
+    else if (tag === 'footer' || role === 'contentinfo') base = 'footer';
+    else if (tag === 'aside' || role === 'complementary') base = 'aside';
+    else if (tag === 'form' || role === 'form') base = 'form';
+    else if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog') base = 'dialog';
+    else if (tag === 'ul' || tag === 'ol' || role === 'list' || role === 'listbox') base = 'list';
+    else if (tag === 'table' || role === 'table' || role === 'grid') base = 'table';
+    else if (role === 'region' || (tag === 'section' && el.getAttribute('aria-label')))
+      base = 'region';
+    else return null;
+    const id = el.id ? String(el.id).slice(0, 24) : '';
+    const label = String(el.getAttribute('aria-label') || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 24)
+      .replace(/"/g, '');
+    if (id && !/\s/.test(id)) return `${base}#${id}`;
+    if (label) return `${base} "${label}"`;
+    return base;
+  }
+
+  const FIND_CONTAINER_TAGS = [
+    'form',
+    'dialog',
+    'li',
+    'tr',
+    'article',
+    'section',
+    'fieldset',
+    'nav',
+    'main',
+    'aside',
+  ];
+  const FIND_CONTAINER_ROLES = [
+    'group',
+    'row',
+    'listitem',
+    'region',
+    'dialog',
+    'article',
+    'form',
+    'navigation',
+  ];
+
+  /**
+   * Nearest container around an element: form, dialog, row, list item, group.
+   * @param {Element} el
+   */
+  function findContainerFor(el) {
+    let cur = el;
+    for (let i = 0; cur && i < 40; i++) {
+      const tag = cur.tagName ? cur.tagName.toLowerCase() : '';
+      if (tag === 'body' || tag === 'html') break;
+      const role = (cur.getAttribute && cur.getAttribute('role')) || '';
+      if (FIND_CONTAINER_TAGS.includes(tag) || FIND_CONTAINER_ROLES.includes(role.toLowerCase()))
+        return cur;
+      cur = cur.parentElement;
+    }
+    return document.body || document.documentElement;
   }
 
   /**
@@ -1090,6 +1176,13 @@
       Number.isFinite(opts.maxItems) && Number(opts.maxItems) > 0
         ? Math.floor(Number(opts.maxItems))
         : 400;
+    const maxName =
+      Number.isFinite(opts.maxNameChars) && Number(opts.maxNameChars) >= 10
+        ? Math.min(Math.floor(Number(opts.maxNameChars)), 200)
+        : 80;
+    const find = opts.find && typeof opts.find === 'object' ? opts.find : null;
+    const findText = find && find.text ? String(find.text).toLowerCase() : '';
+    const findRole = find && find.role ? String(find.role).toLowerCase() : '';
 
     for (const k in window.__claudeElementMap) {
       const weak = window.__claudeElementMap[k];
@@ -1106,8 +1199,19 @@
       }
       root = el;
     }
+    let nearEl = null;
+    if (find && find.nearRef) {
+      const nearStr = String(find.nearRef).trim();
+      nearEl = resolveRef(nearStr);
+      if (!nearEl || !(nearEl instanceof Element)) {
+        return { error: `nearRef "${nearStr}" not found or expired` };
+      }
+      root = findContainerFor(nearEl);
+    }
 
     const lines = [];
+    const groups = [];
+    const omittedGroups = {};
     const childFrames = [];
     let omitted = 0;
     const state = { processed: 0, visited: new WeakSet() };
@@ -1122,7 +1226,7 @@
       return inferLabel(el).length > 0;
     };
 
-    const walk = (el, depth) => {
+    const walk = (el, depth, parentGroup) => {
       if (!el || !el.tagName) return;
       if (depth > MAX_DEPTH || state.processed >= MAX_NODES) return;
       if (state.visited.has(el)) return;
@@ -1149,34 +1253,66 @@
         childFrames.push({ src: String(src || ''), sameOrigin });
         return;
       }
-      if (includeElement(el)) {
-        const refId = assignStableRef(el);
-        const line = formatSnapshotLine(el, refId);
-        const bareGeneric = /^ref_\d+ generic$/.test(line);
-        if (!bareGeneric) {
-          if (lines.length < maxItems) lines.push(line);
-          else omitted++;
+      let group = parentGroup;
+      const base = snapshotGroupBase(el);
+      if (base) {
+        const leaf = parentGroup && parentGroup !== 'page' ? parentGroup.split('/').pop() : '';
+        group = leaf && leaf !== base ? `${leaf}/${base}` : base;
+      }
+      if (includeElement(el) && el !== nearEl) {
+        let skip = false;
+        if (tag === 'img' && !isInteractive(el)) {
+          // Decorative images (no alt, label or title) add nothing.
+          skip = !(
+            el.getAttribute('alt') ||
+            el.getAttribute('aria-label') ||
+            el.getAttribute('title')
+          );
+        }
+        if (!skip && find) {
+          if (findRole && inferRole(el).toLowerCase() !== findRole) skip = true;
+          if (!skip && findText) {
+            const hay = `${inferLabel(el) || ''} ${String(snapshotValue(el) ?? '')}`.toLowerCase();
+            if (!hay.includes(findText)) skip = true;
+          }
+        }
+        if (!skip) {
+          const refId = assignStableRef(el);
+          const line = formatSnapshotLine(el, refId, maxName);
+          const bareGeneric = /^ref_\d+ generic$/.test(line);
+          if (!bareGeneric) {
+            if (lines.length < maxItems) {
+              lines.push(line);
+              groups.push(group);
+            } else {
+              omitted++;
+              omittedGroups[group] = (omittedGroups[group] || 0) + 1;
+            }
+          }
         }
       }
       if (depth >= MAX_DEPTH || state.processed >= MAX_NODES) return;
 
-      forEachChildElement(el, (child) => walk(child, depth + 1));
+      forEachChildElement(el, (child) => walk(child, depth + 1, group));
 
       // Open shadow roots at any depth. Closed roots are not reachable.
       try {
         const shadow = /** @type {any} */ (el).shadowRoot;
         if (shadow && shadow.children) {
-          for (let i = 0; i < shadow.children.length; i++) walk(shadow.children[i], depth + 1);
+          for (let i = 0; i < shadow.children.length; i++)
+            walk(shadow.children[i], depth + 1, group);
         }
       } catch (_) {
         /* ignore */
       }
     };
 
-    if (root) walk(root, 0);
+    if (root) walk(root, 0, 'page');
 
     return {
       lines,
+      groups,
+      omittedGroups,
       childFrames,
       truncated: omitted > 0,
       omitted,
@@ -1587,6 +1723,8 @@
             filter: request.filter,
             refId: request.refId,
             maxItems: request.maxItems,
+            maxNameChars: request.maxNameChars,
+            find: request.find,
             includeHidden: request.includeHidden === true,
           });
           if (result && result.error) {

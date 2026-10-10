@@ -8,6 +8,9 @@ import {
   frameIsSameOrigin,
   listPierceBackendIds,
   matchFrameSlots,
+  paginateSnapshot,
+  parseSnapshotBudget,
+  capLinesByChars,
   parseAgentRef,
   parseCdpRef,
   pierceBoxBudget,
@@ -38,8 +41,6 @@ import { runWithDebugger, type CdpSend } from '@/utils/cdp-run';
  * Previous snapshots are kept in memory so `since` can return a diff.
  */
 
-const DEFAULT_MAX_ITEMS = 400;
-const HARD_MAX_ITEMS = 2000;
 const MAX_SNAPSHOTS_PER_TAB = 30;
 const PIERCE_ATTACH_WAIT_MS = 150;
 
@@ -99,6 +100,12 @@ export interface CapturedSnapshot {
   title: string;
   truncated: boolean;
   omitted: number;
+  /** Landmark for each line, parallel to `lines`. */
+  groups?: string[];
+  /** Per-landmark counts of lines dropped at the collection limit. */
+  omittedGroups?: Record<string, number>;
+  /** Advice when the page is mostly pixels. */
+  hint?: string;
 }
 
 interface StoredSnapshot extends CapturedSnapshot {
@@ -111,6 +118,11 @@ interface SnapshotParams {
   filter?: 'interactive' | 'all';
   refId?: string;
   maxItems?: number;
+  maxChars?: number;
+  maxNameChars?: number;
+  cursor?: number;
+  collapseRepeats?: boolean;
+  includeImages?: boolean;
   since?: string;
   tabId?: number;
   windowId?: number;
@@ -125,9 +137,18 @@ export interface SnapshotQuery {
   scope: 'viewport' | 'page';
   filter: 'interactive' | 'all';
   refId?: string;
+  /** Page size. */
   maxItems: number;
+  maxChars: number;
+  maxNameChars: number;
+  /** Line offset to start from. */
+  offset: number;
+  collapseRepeats: boolean;
+  includeImages: boolean;
   frameId?: number;
   includeHidden?: boolean;
+  /** chrome_find matching, applied inside the page. */
+  find?: { text?: string; role?: string; nearRef?: string };
 }
 
 interface LocalFrameSnapshot {
@@ -137,6 +158,9 @@ interface LocalFrameSnapshot {
   title: string;
   truncated: boolean;
   omitted: number;
+  groups: string[];
+  omittedGroups: Record<string, number>;
+  hint?: string;
 }
 
 const snapshotsById = new Map<string, StoredSnapshot>();
@@ -154,11 +178,11 @@ function errMsg(error: unknown): string {
 export function normalizeSnapshotQuery(
   args: SnapshotParams | undefined,
 ): SnapshotQuery | { error: string } {
-  const scope = args?.scope === undefined ? 'page' : args.scope;
+  const scope = args?.scope === undefined ? 'viewport' : args.scope;
   if (scope !== 'page' && scope !== 'viewport') {
     return { error: 'scope must be "viewport" or "page"' };
   }
-  const filter = args?.filter === undefined ? 'all' : args.filter;
+  const filter = args?.filter === undefined ? 'interactive' : args.filter;
   if (filter !== 'all' && filter !== 'interactive') {
     return { error: 'filter must be "interactive" or "all"' };
   }
@@ -166,11 +190,13 @@ export function normalizeSnapshotQuery(
   if (args?.refId !== undefined && !refId) {
     return { error: 'refId must be a non-empty string' };
   }
-  let maxItems = DEFAULT_MAX_ITEMS;
-  if (args?.maxItems !== undefined) {
-    const n = Number(args.maxItems);
-    if (!Number.isInteger(n) || n < 1) return { error: 'maxItems must be a positive integer' };
-    maxItems = Math.min(n, HARD_MAX_ITEMS);
+  const budget = parseSnapshotBudget(args);
+  if ('error' in budget) return budget;
+  if (args?.collapseRepeats !== undefined && typeof args.collapseRepeats !== 'boolean') {
+    return { error: 'collapseRepeats must be a boolean' };
+  }
+  if (args?.includeImages !== undefined && typeof args.includeImages !== 'boolean') {
+    return { error: 'includeImages must be a boolean' };
   }
   let frameId: number | undefined;
   if (args?.frameId !== undefined) {
@@ -183,10 +209,35 @@ export function normalizeSnapshotQuery(
     scope,
     filter,
     refId: refId || undefined,
-    maxItems,
+    maxItems: budget.maxItems,
+    maxChars: budget.maxChars,
+    maxNameChars: budget.maxNameChars,
+    offset: budget.offset,
+    collapseRepeats: args?.collapseRepeats !== false,
+    includeImages: args?.includeImages === true,
     frameId,
     includeHidden: args?.includeHidden === true,
   };
+}
+
+/** Split one character budget across added, removed, changed (in that order). */
+function capDiff(
+  diff: SnapshotLineDiff,
+  maxChars: number,
+): { added: string[]; removed: string[]; changed: string[]; cut: number } {
+  let left = maxChars;
+  let cut = 0;
+  const take = (lines: string[]): string[] => {
+    const res = capLinesByChars(lines, Math.max(left, 200));
+    const used = res.lines.reduce((acc, line) => acc + line.length + 1, 0);
+    left = Math.max(0, left - used);
+    cut += res.cut;
+    return left === 0 && res.lines.length === 0 ? [] : res.lines;
+  };
+  const added = take(diff.added);
+  const removed = take(diff.removed);
+  const changed = take(diff.changed);
+  return { added, removed, changed, cut };
 }
 
 function rememberSnapshot(tabId: number, captured: CapturedSnapshot): string {
@@ -218,7 +269,7 @@ export function clearStoredSnapshots(tabId?: number): void {
   snapshotOrderByTab.delete(tabId);
 }
 
-class SnapshotTool extends BaseBrowserToolExecutor {
+export class SnapshotTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.BROWSER.SNAPSHOT;
 
   async execute(args: SnapshotParams): Promise<ToolResult> {
@@ -303,7 +354,23 @@ class SnapshotTool extends BaseBrowserToolExecutor {
       } else {
         captured = await this.capture(tab.id, query);
       }
-      const snapshotId = rememberSnapshot(tab.id, captured);
+      const entries = captured.lines.map((line, i) => ({
+        line,
+        group: captured.groups?.[i] || 'page',
+      }));
+      const page = paginateSnapshot(entries, {
+        offset: query.offset,
+        maxItems: query.maxItems,
+        maxChars: query.maxChars,
+        extraOmitted: captured.omitted,
+        extraGroups: captured.omittedGroups,
+      });
+      const snapshotId = rememberSnapshot(tab.id, {
+        ...captured,
+        lines: page.lines,
+        truncated: page.truncated,
+        omitted: page.remaining,
+      });
       const pierceFields = pierceUsed
         ? { pierce: true as const }
         : pierceFallback
@@ -312,7 +379,8 @@ class SnapshotTool extends BaseBrowserToolExecutor {
 
       const origin = originFromUrl(captured.url || tab.url);
       if (baseline) {
-        const diff: SnapshotLineDiff = diffSnapshotLines(baseline.lines, captured.lines);
+        const diff: SnapshotLineDiff = diffSnapshotLines(baseline.lines, page.lines);
+        const capped = capDiff(diff, query.maxChars);
         return ok({
           success: true,
           snapshotId,
@@ -321,10 +389,12 @@ class SnapshotTool extends BaseBrowserToolExecutor {
           filter: query.filter,
           url: captured.url,
           title: wrapUntrusted(origin, captured.title),
-          truncated: captured.truncated,
-          added: wrapPageLines(origin, diff.added),
-          removed: wrapPageLines(origin, diff.removed),
-          changed: wrapPageLines(origin, diff.changed),
+          truncated: page.truncated || capped.cut > 0,
+          ...(page.remaining > 0 ? { remaining: page.remaining } : {}),
+          ...(capped.cut > 0 ? { diffLinesCut: capped.cut } : {}),
+          added: wrapPageLines(origin, capped.added),
+          removed: wrapPageLines(origin, capped.removed),
+          changed: wrapPageLines(origin, capped.changed),
           ...pierceFields,
         });
       }
@@ -336,9 +406,12 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         filter: query.filter,
         url: captured.url,
         title: wrapUntrusted(origin, captured.title),
-        count: captured.lines.length,
-        truncated: captured.truncated,
-        lines: wrapPageLines(origin, captured.lines),
+        count: page.shown,
+        truncated: page.truncated,
+        ...(page.truncated ? { remaining: page.remaining, nextCursor: page.nextCursor } : {}),
+        ...(query.offset > 0 ? { cursor: query.offset } : {}),
+        lines: wrapPageLines(origin, page.outline ? [...page.lines, page.outline] : page.lines),
+        ...(captured.hint ? { hint: captured.hint } : {}),
         ...pierceFields,
         tips: pierceUsed
           ? 'Pierce refs look like cdp_N and are the CDP backendNodeId. chrome_file_chooser accepts them. chrome_click_element and chrome_fill_or_select still use ref_ refs from a snapshot without pierce. Pass since to diff, or observe:true on an action. Screenshot only if layout matters.'
@@ -374,26 +447,36 @@ class SnapshotTool extends BaseBrowserToolExecutor {
     }
 
     const lines: string[] = [];
+    const groups: string[] = [];
+    const omittedGroups: Record<string, number> = {};
     let url = '';
     let title = '';
     let truncated = false;
     let omitted = 0;
-    let budget = query.maxItems;
+    let hint: string | undefined;
+    // Collect enough lines to serve this page. Later pages re-collect with a larger offset.
+    let budget = query.offset + query.maxItems;
     const visited = new Set<number>();
+    const nearRef = query.find?.nearRef ? parseAgentRef(query.find.nearRef) : undefined;
+    const nearFrame = nearRef ? (nearRef.frameId ?? 0) : undefined;
 
-    const pushLine = (line: string) => {
+    const pushLine = (line: string, group = 'page') => {
       if (budget <= 0) {
         truncated = true;
         omitted++;
+        omittedGroups[group] = (omittedGroups[group] || 0) + 1;
         return;
       }
       lines.push(line);
+      groups.push(group);
       budget--;
     };
 
     const walk = async (frameId: number, refId?: string): Promise<void> => {
       if (visited.has(frameId)) return;
       visited.add(frameId);
+      // nearRef scopes a find to the frame the ref lives in.
+      if (nearFrame !== undefined && frameId !== nearFrame) return;
       let local: LocalFrameSnapshot;
       try {
         local = await this.captureFrame(
@@ -413,7 +496,13 @@ class SnapshotTool extends BaseBrowserToolExecutor {
       }
       if (local.truncated) truncated = true;
       omitted += local.omitted;
-      for (const line of local.lines) pushLine(prefixSnapshotLine(line, frameId));
+      for (const [name, n] of Object.entries(local.omittedGroups)) {
+        omittedGroups[name] = (omittedGroups[name] || 0) + n;
+      }
+      if (!hint && local.hint) hint = local.hint;
+      local.lines.forEach((line, i) =>
+        pushLine(prefixSnapshotLine(line, frameId), local.groups[i] || 'page'),
+      );
 
       const children = byParent.get(frameId) || [];
       const matched = matchFrameSlots(local.childFrames, children, local.url);
@@ -436,8 +525,8 @@ class SnapshotTool extends BaseBrowserToolExecutor {
       }
     };
 
-    await walk(rootFrame, rootRef);
-    return { lines, url, title, truncated, omitted };
+    await walk(nearFrame ?? rootFrame, nearFrame !== undefined ? undefined : rootRef);
+    return { lines, groups, omittedGroups, url, title, truncated, omitted, hint };
   }
 
   private async listFrames(tabId: number): Promise<FrameRecord[]> {
@@ -575,13 +664,16 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         }
 
         const lines: string[] = [];
+        const groups: string[] = [];
+        const omittedGroups: Record<string, number> = {};
         let truncated = boxCapped;
         let omitted = 0;
-        let remaining = query.maxItems;
+        let remaining = query.offset + query.maxItems;
         for (const doc of selected) {
           const formatted = formatPierceSnapshot(doc.root, {
             filter: query.filter,
             maxItems: remaining,
+            maxNameChars: query.maxNameChars,
             inViewport:
               query.scope === 'viewport' ? visibleByRoot.get(doc.root) || new Set() : undefined,
             rootBackendNodeId,
@@ -590,6 +682,10 @@ class SnapshotTool extends BaseBrowserToolExecutor {
             throw new Error(`cdp ref ${query.refId} was not found. Take a fresh pierce snapshot.`);
           }
           lines.push(...formatted.lines);
+          groups.push(...formatted.groups);
+          for (const [name, n] of Object.entries(formatted.omittedGroups)) {
+            omittedGroups[name] = (omittedGroups[name] || 0) + n;
+          }
           remaining -= formatted.lines.length;
           truncated = truncated || formatted.truncated;
           omitted += formatted.omitted;
@@ -599,9 +695,11 @@ class SnapshotTool extends BaseBrowserToolExecutor {
           if (remaining <= 0) {
             truncated = true;
             omitted += 1;
+            omittedGroups.page = (omittedGroups.page || 0) + 1;
             continue;
           }
           lines.push(note);
+          groups.push('page');
           remaining -= 1;
         }
 
@@ -624,7 +722,7 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         } catch {
           title = '';
         }
-        return { lines, url, title, truncated, omitted };
+        return { lines, groups, omittedGroups, url, title, truncated, omitted };
       } finally {
         try {
           await send('Target.setAutoAttach', {
@@ -663,6 +761,10 @@ class SnapshotTool extends BaseBrowserToolExecutor {
         filter: query.filter,
         refId,
         maxItems: query.maxItems,
+        maxNameChars: query.maxNameChars,
+        collapseRepeats: query.collapseRepeats,
+        includeImages: query.includeImages,
+        find: query.find,
         includeHidden: query.includeHidden === true,
       },
       frameId,
@@ -688,6 +790,18 @@ class SnapshotTool extends BaseBrowserToolExecutor {
       title: typeof resp.title === 'string' ? resp.title : '',
       truncated: resp.truncated === true,
       omitted: typeof resp.omitted === 'number' ? resp.omitted : 0,
+      groups: Array.isArray(resp.groups)
+        ? resp.groups.map((group: unknown) => (typeof group === 'string' ? group : 'page'))
+        : [],
+      omittedGroups:
+        resp.omittedGroups && typeof resp.omittedGroups === 'object'
+          ? Object.fromEntries(
+              Object.entries(resp.omittedGroups as Record<string, unknown>).filter(
+                ([, n]) => typeof n === 'number',
+              ) as [string, number][],
+            )
+          : {},
+      hint: typeof resp.hint === 'string' && resp.hint ? resp.hint : undefined,
     };
   }
 }

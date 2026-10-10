@@ -576,6 +576,7 @@ const SKIP_SITE_POLICY = new Set([
 const PAGE_READ_TOOLS = new Set([
   'chrome_read_page',
   'chrome_snapshot',
+  'chrome_find',
   'chrome_get_web_content',
   'chrome_console',
   'chrome_network_capture',

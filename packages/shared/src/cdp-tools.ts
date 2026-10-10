@@ -133,10 +133,15 @@ export interface PierceFormatOptions {
   inViewport?: ReadonlySet<number>;
   /** Emit only this node's subtree. The node itself is included when it qualifies. */
   rootBackendNodeId?: number;
+  /** Cap for each name and value. Defaults to the built-in pierce limits. */
+  maxNameChars?: number;
 }
 
 export interface PierceSnapshotText {
   lines: string[];
+  /** Nearest preceding landmark for each line, in document order. */
+  groups: string[];
+  omittedGroups: Record<string, number>;
   truncated: boolean;
   omitted: number;
   missingRoot: boolean;
@@ -731,7 +736,14 @@ export function formatPierceSnapshot(
     ? Math.max(0, Math.floor(options.maxItems))
     : 0;
   const lines: string[] = [];
+  const groups: string[] = [];
+  const omittedGroups: Record<string, number> = {};
   const seen = new Set<number>();
+  const nameCap =
+    typeof options.maxNameChars === 'number' && options.maxNameChars >= 2
+      ? Math.floor(options.maxNameChars)
+      : 0;
+  let landmark = 'page';
   let truncated = false;
   let omitted = 0;
   const found = visitPierce(root, options.rootBackendNodeId, (node, tag) => {
@@ -740,23 +752,32 @@ export function formatPierceSnapshot(
     if (seen.has(node.backendNodeId)) return;
     if (options.inViewport && !options.inViewport.has(node.backendNodeId)) return;
     seen.add(node.backendNodeId);
+    if (LANDMARK_ROLES.has(decision.role)) landmark = decision.role;
     if (lines.length >= maxItems) {
       truncated = true;
       omitted += 1;
+      omittedGroups[landmark] = (omittedGroups[landmark] || 0) + 1;
       return;
     }
+    const capText = (text: string | undefined) =>
+      nameCap && typeof text === 'string' && text.length > nameCap
+        ? `${text.slice(0, nameCap - 1)}\u2026`
+        : text;
     lines.push(
       formatPierceLine(
         formatCdpRef(node.backendNodeId),
         decision.role,
-        decision.name,
-        decision.value,
+        capText(decision.name) as typeof decision.name,
+        capText(decision.value as string | undefined) as typeof decision.value,
         decision.flags,
       ),
     );
+    groups.push(landmark);
   });
   return {
     lines,
+    groups,
+    omittedGroups,
     truncated,
     omitted,
     missingRoot: options.rootBackendNodeId !== undefined && !found,

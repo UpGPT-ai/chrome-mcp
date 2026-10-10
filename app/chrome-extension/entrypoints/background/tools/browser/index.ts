@@ -35,6 +35,7 @@ export { consoleTool } from './console';
 export { fileUploadTool } from './file-upload';
 export { readPageTool } from './read-page';
 export { snapshotTool } from './snapshot';
+export { findTool } from './find';
 export { waitForTool } from './wait-for';
 export { computerTool } from './computer';
 export { handleDialogTool } from './dialog';

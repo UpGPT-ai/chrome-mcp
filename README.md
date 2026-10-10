@@ -43,7 +43,7 @@ fails, see
 ## What it can do
 
 The server exposes tools for tabs and windows, reading pages (`chrome_read_page`, `chrome_snapshot`,
-`chrome_get_web_content`), clicking and typing, forms, screenshots, network capture and requests,
+`chrome_find`, `chrome_get_web_content`), clicking and typing, forms, screenshots, network capture and requests,
 console, history, bookmarks, downloads, tab groups, file upload, print to PDF, and recorded flows
 that can be replayed. Some tools are high-risk and are off by default: cookies, storage values,
 request interception, permission grants, clipboard, and recording.

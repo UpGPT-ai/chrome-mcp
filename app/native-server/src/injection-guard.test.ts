@@ -56,6 +56,7 @@ describe('untrusted page envelope', () => {
     for (const name of [
       'chrome_read_page',
       'chrome_snapshot',
+      'chrome_find',
       'chrome_get_web_content',
       'chrome_console',
       'chrome_network_request',
