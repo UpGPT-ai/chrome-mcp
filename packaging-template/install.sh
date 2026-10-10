@@ -6,7 +6,9 @@
 #
 # Options:
 #   --yes, -y           don't pause for the cloud-synced-folder warning
-#   --skip-npm-install  skip "npm install" (dependencies already present)
+#
+# Needs only Node.js 20+. Nothing is downloaded or compiled: the native server
+# is a self-contained bundle.
 #
 # Works with the macOS default bash 3.2. Safe to re-run.
 
@@ -14,12 +16,10 @@ set -u
 
 EXTENSION_ID='gnkfbbmfkabopdomoedaamfpgnakoici'
 YES=0
-SKIP_NPM=0
 for arg in "$@"; do
   case "$arg" in
     --yes|-y) YES=1 ;;
-    --skip-npm-install) SKIP_NPM=1 ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg (see --help)"; exit 2 ;;
   esac
 done
@@ -45,18 +45,18 @@ if [ ! -f "$SERVER/package.json" ] || [ ! -f "$SERVER/dist/cli.js" ] || [ ! -f "
 fi
 ok "native-server and chrome-extension found"
 
-# --- 2. Node.js / npm ----------------------------------------------------------
+# --- 2. Node.js ----------------------------------------------------------
 step "Checking Node.js"
 command -v node >/dev/null 2>&1 || fail "Node.js not found on PATH. Install the LTS version from https://nodejs.org (or 'brew install node'), then open a NEW terminal and re-run."
 NODE_VER="$(node -v)"
 NODE_MAJOR="${NODE_VER#v}"; NODE_MAJOR="${NODE_MAJOR%%.*}"
 [ "$NODE_MAJOR" -ge 20 ] 2>/dev/null || fail "Node.js $NODE_VER is too old; version 20 or newer is required."
 ok "Node.js $NODE_VER at $(command -v node)"
-command -v npm >/dev/null 2>&1 || fail "npm not found. Reinstall Node.js from https://nodejs.org."
 
 # --- 3. Conflicting global install --------------------------------------------
 step "Checking for a conflicting global mcp-chrome-bridge"
-GLOBAL_ROOT="$(npm root -g 2>/dev/null || true)"
+GLOBAL_ROOT=""
+if command -v npm >/dev/null 2>&1; then GLOBAL_ROOT="$(npm root -g 2>/dev/null || true)"; fi
 if [ -n "$GLOBAL_ROOT" ] && [ -d "$GLOBAL_ROOT/mcp-chrome-bridge" ]; then
   printf '\n%sThe public npm package "mcp-chrome-bridge" is installed globally.%s\n' "$C_RED" "$C_OFF"
   echo "Its setup script overwrites Chrome's registration with the PUBLIC extension ID,"
@@ -73,7 +73,7 @@ case "$ROOT" in
   *"/Dropbox"*|*"/OneDrive"*|*"/Google Drive"*|*"/GoogleDrive"*|*"/iCloud"*|*"/Mobile Documents/"*|*"/Library/CloudStorage/"*)
     step "Location warning"
     warn "This package is inside a cloud-synced folder: $ROOT"
-    warn "npm install writes ~20,000 small files; sync clients lock and upload them."
+    warn "sync clients can lock or rewrite files while Chrome is using them."
     warn "Recommended: move the whole folder to e.g. ~/Applications/chrome-mcp-package and re-run."
     warn "(Chrome loads the extension from wherever it sits, so pick a permanent spot.)"
     if [ "$YES" -ne 1 ] && [ -t 0 ]; then
@@ -96,24 +96,9 @@ if [ "$(uname -s)" = "Darwin" ] && command -v xattr >/dev/null 2>&1; then
 fi
 chmod +x "$ROOT/install.sh" 2>/dev/null || true
 
-# --- 6. npm install ------------------------------------------------------------
+# --- 6. (no dependency install: the server is bundled) --------------------------
 cd "$SERVER" || fail "cannot cd to $SERVER"
-if [ "$SKIP_NPM" -eq 1 ]; then
-  step "Skipping npm install (--skip-npm-install)"
-else
-  step "Installing dependencies (npm install - takes a minute or two)"
-  printf '    %sWarnings about "deprecated" packages and "allow-scripts" are expected and harmless.%s\n' "$C_DIM" "$C_OFF"
-  npm install --no-fund --no-audit || fail "npm install failed (see output above)"
-  ok "dependencies installed"
-fi
-
-SQLITE="$SERVER/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-if [ ! -f "$SQLITE" ]; then
-  warn "better-sqlite3 native binary missing - attempting rebuild"
-  npm rebuild better-sqlite3
-  [ -f "$SQLITE" ] || fail "better-sqlite3 could not be built. macOS: run 'xcode-select --install'. Linux: install build-essential and python3. Then re-run."
-fi
-ok "better-sqlite3 native module present"
+ok "no npm install needed - server is self-contained"
 
 # --- 7. Register with Chrome ---------------------------------------------------
 step "Registering native messaging host with Chrome"

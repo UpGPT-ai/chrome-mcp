@@ -5,11 +5,12 @@
   Easiest: double-click install.cmd (it bypasses the execution-policy block).
 
   Options:
-    -SkipNpmInstall   skip "npm install" (dependencies already present)
     -Yes              don't pause for the cloud-sync-folder warning
+
+  Needs only Node.js 20+. Nothing is downloaded or compiled: the native server is a
+  self-contained bundle.
 #>
 param(
-    [switch]$SkipNpmInstall,
     [switch]$Yes
 )
 
@@ -77,14 +78,11 @@ $major = [int]($ver.TrimStart('v').Split('.')[0])
 if ($major -lt 20) { Fail "Node.js $ver is too old; version 20 or newer is required." }
 Ok "Node.js $ver at $($node.Source)"
 
-# Always call npm.cmd: plain "npm" resolves to npm.ps1, which Windows PowerShell
-# blocks under the default execution policy ("running scripts is disabled").
-$npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-if (-not $npm) { Fail "npm.cmd not found. Reinstall Node.js from https://nodejs.org." }
-
 # --- 3. Conflicting global install --------------------------------------------
 Step "Checking for a conflicting global mcp-chrome-bridge"
-$globalRoot = (& npm.cmd root -g 2>$null | Out-String).Trim()
+$globalRoot = ''
+$npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if ($npm) { $globalRoot = (& npm.cmd root -g 2>$null | Out-String).Trim() }
 if ($globalRoot -and (Test-Path (Join-Path $globalRoot 'mcp-chrome-bridge'))) {
     Write-Host ""
     Write-Host "The public npm package 'mcp-chrome-bridge' is installed globally." -ForegroundColor Red
@@ -102,8 +100,8 @@ if ($Root -match '\\(Dropbox|OneDrive|Google Drive|iCloud ?Drive)[^\\]*\\') {
     Step "Location warning"
     Warn "This package is inside a cloud-synced folder:"
     Warn "  $Root"
-    Warn "npm install writes ~20,000 small files; sync clients can lock them (EBUSY/EPERM)"
-    Warn "and will upload all of them. Recommended: move the whole folder to e.g."
+    Warn "sync clients can lock or rewrite files while Chrome is using them (EBUSY/EPERM)."
+    Warn "Recommended: move the whole folder to e.g."
     Warn "  C:\Tools\chrome-mcp   and run install.cmd from there."
     Warn "(Chrome loads the extension from wherever it sits, so pick a permanent spot.)"
     if (-not $Yes) {
@@ -112,29 +110,10 @@ if ($Root -match '\\(Dropbox|OneDrive|Google Drive|iCloud ?Drive)[^\\]*\\') {
     }
 }
 
-# --- 5. npm install ------------------------------------------------------------
+# --- 5. (no dependency install: the server is bundled) --------------------------
 Push-Location $Server
 try {
-    if ($SkipNpmInstall) {
-        Step "Skipping npm install (-SkipNpmInstall)"
-    } else {
-        Step "Installing dependencies (npm install - takes a few minutes)"
-        Write-Host "    Warnings about 'deprecated' packages and 'allow-scripts' are expected and harmless." -ForegroundColor DarkGray
-        & npm.cmd install --no-fund --no-audit
-        if ($LASTEXITCODE -ne 0) { Fail "npm install exited with code $LASTEXITCODE (see output above)" }
-        Ok "dependencies installed"
-    }
-
-    # better-sqlite3 is a native module; make sure a compiled binary exists.
-    $sqlite = Join-Path $Server 'node_modules\better-sqlite3\build\Release\better_sqlite3.node'
-    if (-not (Test-Path $sqlite)) {
-        Warn "better-sqlite3 native binary missing - attempting rebuild"
-        & npm.cmd rebuild better-sqlite3
-        if (-not (Test-Path $sqlite)) {
-            Fail "better-sqlite3 could not be built. Install Visual Studio Build Tools with the 'Desktop development with C++' workload, then re-run."
-        }
-    }
-    Ok "better-sqlite3 native module present"
+    Ok "no npm install needed - server is self-contained"
 
     # --- 6. Register with Chrome ----------------------------------------------
     Step "Registering native messaging host with Chrome"
